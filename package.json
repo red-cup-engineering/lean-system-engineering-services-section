@@ -4,6 +4,11 @@
   "type": "module",
   "private": false,
   "description": "Lean/Blueprint/Verso proofing-project domain logic: toolchain/Lakefile/module codecs, import-graph/theorem-spine/capability-surface readers, Blueprint claim-graph linting, Verso exposition welding, and a live Lean-workspace filesystem reader.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/red-cup-engineering/computer-systems-engineering-services-section.git",
+    "directory": "services/computer-proofing-system-services-section/services/lean-system-services-section"
+  },
   "license": "UNLICENSED",
   "engines": {
     "node": ">=22.18"
