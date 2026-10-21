@@ -8,7 +8,7 @@
     "type": "git",
     "url": "git+https://github.com/red-cup-engineering/lean-system-services-section.git"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "node": ">=22.18"
   },
@@ -133,5 +133,9 @@
     "verso",
     "theorem-proving",
     "proof-assistant"
-  ]
+  ],
+  "funding": {
+    "type": "individual",
+    "url": "https://github.com/561-group/.github/blob/main/TIPS.md"
+  }
 }
