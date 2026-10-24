@@ -7,7 +7,7 @@
  */
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdir, readFile, realpath, unlink, writeFile, rmdir } from "node:fs/promises";
+import { mkdir, readFile, realpath, lstat, unlink, writeFile, rmdir } from "node:fs/promises";
 import { planLeanCheck } from "./plan.mjs";
 import { runLeanCheck } from "./run.mjs";
 import { validateProofTarget, observeProofTarget, judgeProofTarget } from "./proof-target.mjs";
@@ -22,6 +22,39 @@ function bounded(value, field, lower, upper) {
     throw new TypeError("lean-prove: invalid " + field);
   return value;
 }
+/**
+ * The mathematical office can author arbitrary complex tactics as source
+ * files under proofs/. This is NOT public untrusted task input: the files
+ * must be materialized by the same authorized maker as the Lean workspace.
+ * Published Conjectures task data never supplies these tactic sources.
+ */
+function candidatePaths(paths) {
+  if (!Array.isArray(paths) || paths.length > 16 ||
+      paths.some(p => typeof p !== "string" || !p.startsWith("proofs/") ||
+        !(p.endsWith(".tactic") || p.endsWith(".leanproof")) ||
+        p.includes("\\") || path.isAbsolute(p) ||
+        p.split("/").some(part => !part || part === "." || part === "..")))
+    throw new TypeError("lean-prove: proposalFiles must be at most 16 authored proofs/*.tactic paths");
+  return Object.freeze([...new Set(paths)]);
+}
+async function readProofProposals(root, paths) {
+  return Promise.all(paths.map(async proposalPath => {
+    const filename = path.join(root, proposalPath);
+    const info = await lstat(filename);
+    const real = await realpath(filename);
+    const delta = path.relative(root, real);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 131072 ||
+        delta === ".." || delta.startsWith(".." + path.sep) ||
+        path.isAbsolute(delta))
+      throw new TypeError("lean-prove: non-admitted proposal source " + proposalPath);
+    const bytes = await readFile(real);
+    const proof = bytes.toString("utf8").replace(/^by\s*\r?\n/u,"").trim();
+    if (!proof || proof.includes("\0"))
+      throw new TypeError("lean-prove: empty or invalid mathematical proposal " + proposalPath);
+    return Object.freeze({path:proposalPath,digest:hash(bytes),program:proof});
+  }));
+}
+
 function qualifiedHints(hints) {
   if (!Array.isArray(hints) || hints.length > 32 ||
       hints.some(n => typeof n !== "string" || !qualified.test(n)))
@@ -55,7 +88,7 @@ export function planLeanProof(input) {
        !/^[a-z]+:[a-z0-9-]+$/u.test(input.blueprintLabel)))
     throw new TypeError("lean-prove: blueprintLabel must be an exact source claim label");
   for (const key of Object.keys(input))
-    if (!["project", "file", "taskDirectory", "id", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints", "proofTarget"].includes(key))
+    if (!["project", "file", "taskDirectory", "id", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints", "proposalFiles", "proofTarget"].includes(key))
       throw new TypeError("lean-prove: unexpected field " + key);
   return Object.freeze({
     kind: "metroplat.lean.proof-search-plan", id, project: path.resolve(input.project),
@@ -64,6 +97,7 @@ export function planLeanProof(input) {
     maxAttempts: bounded(input.maxAttempts ?? 16, "maxAttempts", 1, 64),
     timeoutMs: bounded(input.timeoutMs ?? 60_000, "timeoutMs", 1000, 180_000),
     hints: Object.freeze(qualifiedHints(input.hints ?? [])),
+    proposalFiles: candidatePaths(input.proposalFiles ?? []),
     ...(input.blueprintLabel === undefined ? {} : {blueprintLabel:input.blueprintLabel}),
     ...(input.proofTarget === undefined ? {} : {proofTarget:validateProofTarget(input.proofTarget)}),
   });
@@ -228,7 +262,11 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
     throw new TypeError("lean-prove: source theorem or forbidden task dependency is a proof hint");
   // Base strategies are read from the actual library hints. When a tactic
   // exposes genuine unsolved goals, synthesize its *continuation* next.
-  const programs = [...proofPrograms(hints)];
+  const proposals = await readProofProposals(root, plan.proposalFiles ?? []);
+  const byProgram = new Map(proposals.map(p => [p.program,p]));
+  // Real source-authored mathematical strategies are tried FIRST. Generic
+  // tactics follow only when the Research/Faber proposals have not proved it.
+  const programs = [...new Set([...proposals.map(p => p.program), ...proofPrograms(hints)])];
   const queued = new Set(programs);
   const folder = path.join(root, ".lake", "proof-search");
   const file = "ProofSearch_" + plan.id.replaceAll("-", "_") + ".lean";
@@ -273,6 +311,8 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
       const goals = remainingLeanGoals(message);
       attempts.push(Object.freeze({
         index, program, state: compiled ? "candidate-compiled" : result?.state ?? "failed",
+        ...(byProgram.has(program) ? {sourceProposal:{
+          path:byProgram.get(program).path,digest:byProgram.get(program).digest}} : {}),
         ...(axioms === null ? {} : {axioms}),
         ...(targetVerdict === undefined ? {} : {proofTargetStatus:targetVerdict.status}),
         ...(compiled ? {} : {diagnostic:message,openGoals:goals}),
@@ -330,6 +370,11 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         }
         if (hash(await readFile(sourcePath)) !== hash(originalBytes))
           throw new Error("lean-prove: original theorem changed during proof construction");
+        // Every source-authored proof consumed must remain byte-identical.
+        for (const proposal of proposals) {
+          if (hash(await readFile(path.join(root,proposal.path))) !== proposal.digest)
+            throw new Error("lean-prove: mathematical proposal changed during proof construction");
+        }
         if (task !== undefined) {
           const currentTask = await readConjecturesTask(root, plan.taskDirectory, {taskRoot});
           if (currentTask.manifestDigest !== task.manifestDigest ||
@@ -346,6 +391,8 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           ...(selectedTargetVerdict === undefined ? {} : {proofTarget:selectedTargetVerdict}),
           sourceDigest:hash(originalBytes),candidateDigest:hash(selectedSource),
           proofProgram:selectedProgram,
+          ...(byProgram.has(program) ? {sourceProposal:{
+            path:byProgram.get(program).path,digest:byProgram.get(program).digest}} : {}),
           proofTerm:"by\n  " + selectedProgram.split("\n").join("\n  "),
           candidateSource:selectedSource,hints:Object.freeze(hints),
           attempts:Object.freeze(attempts),started,ended:new Date().toISOString(),
