@@ -366,6 +366,41 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   const attempts = [], started = new Date().toISOString();
   const searchStart = Date.now();
   try {
+    // First ask Lean about the ORIGINAL theorem, not a plausible-looking
+    // replacement. This establishes that the named declaration actually
+    // depends on the exact admitted hole being discharged. Without this,
+    // changing some unrelated by-sorry could be misreported as a proof of the
+    // caller's (already-proved) declaration.
+    const originalCompilerSource = task === undefined ? original : task.originalChallenge;
+    await writeFile(scratch,
+      originalCompilerSource + "\n#print axioms " + plan.declaration + "\n",
+      {mode:0o600});
+    const baseline = await check(planLeanCheck({
+      id:("proof-" + plan.id + "-original").slice(0,80),
+      project:root,mode:"file",file:scratchRelative,
+      timeoutMs:Math.min(plan.timeoutMs,
+        Math.max(1000,plan.totalTimeoutMs - (Date.now() - searchStart))),
+    }));
+    const baselineReadout = String(baseline?.stdout ?? "") + "\n" +
+      String(baseline?.stderr ?? "");
+    const originalAxioms = baseline?.state === "succeeded" ?
+      readPrintedAxioms(baselineReadout,plan.declaration) : null;
+    if (originalAxioms === null || !originalAxioms.includes("sorryAx")) {
+      const blockerCode = baseline?.state !== "succeeded" ?
+        "original-theorem-not-compiled" : "target-not-backed-by-admitted-hole";
+      return retainProofAttempt(root,Object.freeze({
+        kind:"metroplat.lean.proof-search-result",id:plan.id,state:"blocked",
+        project:root,
+        file:task === undefined ? plan.file : plan.taskDirectory + "/Main.lean",
+        declaration:plan.declaration,
+        ...(task === undefined ? {} : {task:taskIdentity(task)}),
+        sourceDigest:hash(originalBytes),attempts:Object.freeze([]),
+        hints:Object.freeze(hints),
+        blockerCode,baselineDiagnostic:baseline?.state === "succeeded" ?
+          "The target does not depend on the admitted proof hole" : diagnostic(baseline),
+        started,ended:new Date().toISOString(),venueAccepted:false,
+      }));
+    }
     for (let index = 0; index < programs.length && index < plan.maxAttempts; index += 1) {
       const remainingMs = plan.totalTimeoutMs - (Date.now() - searchStart);
       if (remainingMs < 1000) break;
@@ -506,6 +541,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           candidatePath:candidateRelative,
           file:task === undefined ? plan.file : plan.taskDirectory + "/Main.lean",
           declaration:plan.declaration, axioms:selectedAxioms,
+          originalAxioms,
           axiomReadout:selectedReadout.slice(-2500),
           ...(task === undefined ? {} : {task:taskIdentity(task),mainLean:selectedSource}),
           ...(selectedTargetVerdict === undefined ? {} : {proofTarget:selectedTargetVerdict}),
@@ -526,7 +562,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
     return retainProofAttempt(root, Object.freeze({
       kind:"metroplat.lean.proof-search-result", id:plan.id, state:"unresolved",
       project:root, file:task === undefined ? plan.file : plan.taskDirectory + "/Main.lean",
-      declaration:plan.declaration,
+      declaration:plan.declaration,originalAxioms,
       ...(task === undefined ? {} : {task:taskIdentity(task)}),
       sourceDigest:hash(originalBytes),
       hints:Object.freeze(hints), attempts:Object.freeze(attempts),
