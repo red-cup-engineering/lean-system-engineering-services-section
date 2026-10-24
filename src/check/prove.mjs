@@ -79,7 +79,7 @@ export function proofPrograms(hints = []) {
   ];
   const names = qualifiedHints(hints);
   for (const name of names)
-    programs.unshift("exact " + name, "simpa using " + name);
+    programs.push("exact " + name, "simpa using " + name);
   for (const name of names)
     programs.push("apply " + name + " <;> assumption", "apply " + name + " <;> simp");
   if (names.length)
@@ -98,6 +98,18 @@ export function replaceProofHole(source, program) {
   return source.slice(0, matches[0].index) + ":= by\n  " +
     program.split("\n").join("\n  ") +
     source.slice(matches[0].index + matches[0][0].length);
+}
+/**
+ * Only the Lean compiler may supply the next goals. A diagnostic is never
+ * interpreted as a theorem result. This compact read retains actual contexts.
+ */
+export function remainingLeanGoals(message) {
+  const text = String(message ?? "");
+  const pos = text.lastIndexOf("unsolved goals");
+  if (pos < 0) return Object.freeze([]);
+  const tail = text.slice(pos + "unsolved goals".length, pos + 9000);
+  return Object.freeze(tail.split(/(?=\n(?:case\s+\S+|⊢))/u)
+    .map(s => s.trim()).filter(s => s.includes("⊢")).slice(0, 16));
 }
 function diagnostic(result) {
   const texts = [...(result?.errors ?? []), ...(result?.compilerErrors ?? [])]
@@ -124,7 +136,10 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   const fromBlueprint = plan.blueprintLabel === undefined ? [] :
     proofHintsFromBlueprint(workspaceRead(root), plan.blueprintLabel);
   const hints = [...new Set([...fromBlueprint, ...plan.hints])].slice(0, 32);
-  const programs = proofPrograms(hints).slice(0, plan.maxAttempts);
+  // Base strategies are read from the actual library hints. When a tactic
+  // exposes genuine unsolved goals, synthesize its *continuation* next.
+  const programs = [...proofPrograms(hints)];
+  const queued = new Set(programs);
   const folder = path.join(root, ".lake", "proof-search");
   const file = "ProofSearch_" + plan.id.replaceAll("-", "_") + ".lean";
   const scratch = path.join(folder, file);
@@ -132,7 +147,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   await mkdir(folder, { recursive: true });
   const attempts = [], started = new Date().toISOString();
   try {
-    for (let index = 0; index < programs.length; index += 1) {
+    for (let index = 0; index < programs.length && index < plan.maxAttempts; index += 1) {
       if (hash(await readFile(sourcePath)) !== hash(originalBytes))
         throw new Error("lean-prove: source changed during search");
       const program = programs[index];
@@ -145,10 +160,21 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
       });
       const result = await check(planCheck);
       const compiled = result?.state === "succeeded";
+      const message = compiled ? "" : diagnostic(result);
+      const goals = remainingLeanGoals(message);
       attempts.push(Object.freeze({
         index, program, state: result?.state ?? "failed",
-        ...(compiled ? {} : {diagnostic:diagnostic(result)}),
+        ...(compiled ? {} : {diagnostic:message,openGoals:goals}),
       }));
+      // Actual compiler goal states, not source-text guesses, warrant
+      // compositional follow-ups; a failed tactic without goals does not.
+      if (!compiled && goals.length && programs.length < 160) {
+        const additions = ["assumption", "simp", "omega", "aesop"]
+          .map(tactic => program + "\n  all_goals " + tactic)
+          .filter(p => !queued.has(p));
+        additions.forEach(p => queued.add(p));
+        programs.splice(index + 1, 0, ...additions);
+      }
       if (compiled) {
         if (hash(await readFile(sourcePath)) !== hash(originalBytes))
           throw new Error("lean-prove: theorem changed during successful search");
@@ -168,8 +194,11 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
       kind:"metroplat.lean.proof-search-result", id:plan.id, state:"unresolved",
       project:root, file:plan.file, sourceDigest:hash(originalBytes),
       hints:Object.freeze(hints), attempts:Object.freeze(attempts),
+      frontier:Object.freeze(attempts.filter(a => a.openGoals?.length)
+        .sort((a,b) => a.openGoals.length - b.openGoals.length).slice(0, 3)
+        .map(a => Object.freeze({program:a.program,openGoals:a.openGoals}))),
       started, ended:new Date().toISOString(), venueAccepted:false,
-      note:"Real compiler attempts did not close the theorem; diagnostics remain useful research input.",
+      note:"Real compiler attempts did not close the theorem; unsolved Lean goals are the research frontier.",
     });
   } finally {
     await unlink(scratch).catch(e => {if(e?.code!=="ENOENT")throw e;});
