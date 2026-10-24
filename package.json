@@ -91,7 +91,22 @@
     "./golden-vector/judge": "./src/golden-vector/judge.mjs",
     "./golden-vector/specification": "./src/golden-vector/specification.mjs",
     "./golden-vector/suites": "./src/golden-vector/suites.mjs",
-    "./conformance-gate": "./src/conformance-gate.mjs"
+    "./conformance-gate": "./src/conformance-gate.mjs",
+    "./check/proof-target": {
+      "import": "./src/check/proof-target.mjs"
+    },
+    "./check/prove": {
+      "import": "./src/check/prove.mjs"
+    },
+    "./check/prove-schema": {
+      "import": "./src/check/prove-schema.mjs"
+    },
+    "./check/conjectures-task": {
+      "import": "./src/check/conjectures-task.mjs"
+    },
+    "./check/conjectures-verify": {
+      "import": "./src/check/conjectures-verify.mjs"
+    }
   },
   "files": [
     "src",
