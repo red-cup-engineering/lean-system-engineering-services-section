@@ -25,7 +25,7 @@ export const leanProofSearchResultSchema = {
     axiomReadout:{type:"string"},
     axioms:{type:"array",items:qualified},
     proofTarget:leanCheckResultSchema.properties.proofTarget,
-    candidateSource:{type:"string"},proofProgram:{type:"string"},
+    candidateSource:{type:"string"},proofProgram:{type:"string"},proofTerm:{type:"string"},
     hints:{type:"array",items:qualified},
     attempts:{type:"array",items:{type:"object",required:["index","program","state"],
       properties:{index:{type:"integer"},program:text,state:text,diagnostic:{type:"string"},openGoals:{type:"array",items:text},axioms:{type:"array",items:qualified},
