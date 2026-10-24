@@ -88,10 +88,15 @@ export function planLeanProof(input) {
        !/^[a-z]+:[a-z0-9-]+$/u.test(input.blueprintLabel)))
     throw new TypeError("lean-prove: blueprintLabel must be an exact source claim label");
   for (const key of Object.keys(input))
-    if (!["project", "file", "taskDirectory", "id", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints", "proposalFiles", "proofTarget"].includes(key))
+    if (!["project", "file", "taskDirectory", "id", "resumeFrom", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints", "proposalFiles", "proofTarget"].includes(key))
       throw new TypeError("lean-prove: unexpected field " + key);
+  if (input.resumeFrom !== undefined &&
+      (typeof input.resumeFrom !== "string" ||
+       !/^[A-Za-z0-9][A-Za-z0-9-]{0,60}$/u.test(input.resumeFrom)))
+    throw new TypeError("lean-prove: resumeFrom must be a previous proof run ID");
   return Object.freeze({
     kind: "metroplat.lean.proof-search-plan", id, project: path.resolve(input.project),
+    ...(input.resumeFrom === undefined ? {} : {resumeFrom:input.resumeFrom}),
     ...(isTask ? { taskDirectory, declaration:"Bounty.target" } :
       { file, declaration:input.declaration }),
     maxAttempts: bounded(input.maxAttempts ?? 16, "maxAttempts", 1, 64),
@@ -231,10 +236,42 @@ async function retainProofAttempt(root, result) {
       candidateDigest:result.candidateDigest ?? null,
       task:result.task ?? null,started:result.started,ended:result.ended,
       hints:result.hints ?? [],attempts:result.attempts,
+      resumedFrom:result.resumedFrom ?? null,
       frontier:result.frontier ?? [],
       candidatePath:result.candidatePath ?? null},null,2)+"\n",
     {flag:"wx",mode:0o600});
   return Object.freeze({...result,receiptPath:relative});
+}
+
+/**
+ * Reuse a source-pinned private compiler history, never a user supplied
+ * success claim. Failed proof programs are expensive work: when the original
+ * theorem and Conjectures task are unchanged, do not blindly recompile them.
+ */
+async function readPreviousProofAttempt(root, runId, sourceDigest, task) {
+  if (runId === undefined) return null;
+  const filename = path.join(root, ".lake", "proof-runs", runId + ".json");
+  const info = await lstat(filename);
+  if (!info.isFile() || info.isSymbolicLink() || info.size > 2 * 1024 * 1024)
+    throw new TypeError("lean-prove: saved proof history must be a private bounded file");
+  let prior;
+  try { prior = JSON.parse(await readFile(filename, "utf8")); }
+  catch { throw new TypeError("lean-prove: unreadable prior compiler history"); }
+  if (prior.kind !== "metroplat.lean.private-proof-attempt" ||
+      prior.id !== runId || prior.sourceDigest !== sourceDigest ||
+      !Array.isArray(prior.attempts) ||
+      prior.attempts.some(a => typeof a.program !== "string" || typeof a.state !== "string") ||
+      (task === undefined ? prior.task !== null :
+        prior.task?.taskId !== task.taskId ||
+        prior.task?.challengeDigest !== task.challengeDigest ||
+        prior.task?.manifestDigest !== task.manifestDigest))
+    throw new TypeError("lean-prove: prior proof history does not belong to this exact theorem/task");
+  return Object.freeze({
+    id:runId,
+    attempted:Object.freeze(prior.attempts.filter(a => a.state !== "candidate-compiled")
+      .map(a => a.program)),
+    frontier:Object.freeze(Array.isArray(prior.frontier) ? prior.frontier : []),
+  });
 }
 
 function taskIdentity(task) {
@@ -293,8 +330,14 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   }
   // Real source-authored mathematical strategies are tried FIRST. Generic
   // tactics follow only when the Research/Faber proposals have not proved it.
-  const programs = [...new Set([...proposals.map(p => p.program), ...proofPrograms(hints)])];
-  const queued = new Set(programs);
+  const previous = await readPreviousProofAttempt(root, plan.resumeFrom,
+    hash(originalBytes), task);
+  const rejected = new Set(previous?.attempted ?? []);
+  // New/edited proof proposals are prioritized, but exact failed proof
+  // programs from the same source revision are not needlessly repeated.
+  const programs = [...new Set([...proposals.map(p => p.program), ...proofPrograms(hints)])]
+    .filter(program => !rejected.has(program));
+  const queued = new Set([...programs,...rejected]);
   const folder = path.join(root, ".lake", "proof-search");
   const file = "ProofSearch_" + plan.id.replaceAll("-", "_") + ".lean";
   const scratch = path.join(folder, file);
@@ -441,6 +484,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           ...(byProgram.has(program) ? {sourceProposals:byProgram.get(program)} : {}),
           proofTerm:"by\n  " + selectedProgram.split("\n").join("\n  "),
           candidateSource:selectedSource,hints:Object.freeze(hints),
+          ...(previous === null ? {} : {resumedFrom:previous.id}),
           attempts:Object.freeze(attempts),started,ended:new Date().toISOString(),
           venueAccepted:false,
           note:"The original theorem was compiled by Lean. Fixed suggestions are replayed before selection; external Comparator acceptance remains separate.",
@@ -456,7 +500,8 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
       ...(task === undefined ? {} : {task:taskIdentity(task)}),
       sourceDigest:hash(originalBytes),
       hints:Object.freeze(hints), attempts:Object.freeze(attempts),
-      frontier:Object.freeze(attempts.filter(a => a.openGoals?.length)
+      ...(previous === null ? {} : {resumedFrom:previous.id}),
+      frontier:Object.freeze([...attempts,...(previous?.frontier ?? []).map(entry => ({openGoals:entry.openGoals,program:entry.program}))].filter(a => a.openGoals?.length)
         .sort((a,b) => a.openGoals.length - b.openGoals.length).slice(0, 3)
         .map(a => Object.freeze({program:a.program,openGoals:a.openGoals}))),
       started, ended:new Date().toISOString(), venueAccepted:false,
