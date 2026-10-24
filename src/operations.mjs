@@ -44,7 +44,7 @@ export function leanCheckOperations({ dataRoot }) {
         locus: "project", writes: [leanProofFeed],
         effects: { class: "external", replay: "coordinated", coordination: "coordination-required", deterministic: "unmeasured", totality: "partial" },
         summary: "Construct actual Lean proof candidates from one unresolved theorem and its Blueprint predecessor lemmas, using the bounded compiler.",
-        description: "Provide a project and one .lean file with exactly one by-sorry hole. Optionally name an original Blueprint claim and qualified Lean lemma hints. The service compiles generated proof programs against the unchanged theorem using the installed lean-check executor, returns the first compiled source or the real failed compiler diagnostics. Never declares independent Comparator acceptance, imported axiom validity or a paid bounty.",
+        description: "Provide a project, exact qualified target declaration and one .lean file with exactly one by-sorry hole. Optionally name an original Blueprint claim whose mapped declaration must match this target, plus qualified Lean predecessor lemmas. The service compiles generated proof programs against the unchanged theorem using the installed lean-check executor, returns the first compiled source or the real failed compiler diagnostics. Never declares independent Comparator acceptance, imported axiom validity or a paid bounty.",
         run: async (input, _args, context) => {
             const id = randomUUID();
             const requestedAt = new Date().toISOString();
