@@ -17,6 +17,27 @@ function append(dataRoot, value, context, feed = leanCheckFeed) {
     return record;
 }
 
+/**
+ * The authenticated RPC caller may receive a complete proof candidate. The
+ * shared EAVT journal must not reproduce unpublished bounty proof bytes,
+ * generated tactic programs, unsolved goals, chat transcripts, or source paths.
+ * It keeps only the evidence needed to resume qualified original Work.
+ */
+function appendProofEvidence(dataRoot, result, context) {
+    const item = {
+        kind:"metroplat.lean.proof-search-evidence",
+        id:result.id,state:result.state,
+        sourceDigest:result.sourceDigest ?? null,
+        candidateDigest:result.candidateDigest ?? null,
+        attemptCount:result.attempts?.length ?? 0,
+        taskId:result.task?.taskId ?? null,
+        venueAccepted:false,
+        ended:result.ended ?? new Date().toISOString(),
+    };
+    append(dataRoot,item,context,leanProofFeed);
+    return result;
+}
+
 export function leanCheckOperations({ dataRoot }) {
     return Object.freeze([operation({
         verb: "lean-check", inputFormat: "json", outputFormat: "json",
@@ -49,20 +70,22 @@ export function leanCheckOperations({ dataRoot }) {
             const id = randomUUID();
             const requestedAt = new Date().toISOString();
             append(dataRoot, {kind:"metroplat.lean.proof-search-request",id,state:"requested",
-                requestedAt,request:input,requestedBy:context?.invocation?.subject ?? null},context,leanProofFeed);
+                requestedAt,request:{mode:input?.taskDirectory ? "conjectures" : "source",
+                    proposalCount:Array.isArray(input?.proposalFiles) ? input.proposalFiles.length : 0},
+                requestedBy:context?.invocation?.subject ?? null},context,leanProofFeed);
             try {
                 const plan = planLeanProof({...(input ?? {}),id});
                 const result = await runLeanProofSearch(plan, {
                     taskRoot:process.env.CONJECTURES_TASKS_ROOT || undefined,
                 });
-                return append(dataRoot,result,context,leanProofFeed);
+                return appendProofEvidence(dataRoot,result,context);
             } catch (error) {
-                return append(dataRoot,{
+                return appendProofEvidence(dataRoot,{
                     kind:"metroplat.lean.proof-search-result",id,state:"failed",
                     sourceDigest:"unavailable",attempts:[],venueAccepted:false,
                     started:requestedAt,ended:new Date().toISOString(),
                     note:error instanceof Error ? error.message : String(error),
-                },context,leanProofFeed);
+                },context);
             }
         },
     })]);
