@@ -91,22 +91,32 @@ export function proofHintsFromBlueprint(workspace, label, targetDeclaration) {
 /** Tactics and lemma applications. These are real proof attempts, not model scores. */
 export function proofPrograms(hints = []) {
   const names = qualifiedHints(hints);
-  const programs = [];
-  // Earned Blueprint predecessor lemmas get compiler attention before generic
-  // tactics. The number of available candidate programs is bounded by the
-  // original work's explicit attempt budget.
+  const fromBlueprint = [];
   for (const name of names) {
-    programs.push("exact " + name, "simpa using " + name,
+    fromBlueprint.push("exact " + name, "simpa using " + name,
       "apply " + name + " <;> assumption",
       "apply " + name + " <;> simp");
   }
   if (names.length)
-    programs.push("simp [" + names.join(", ") + "]",
+    fromBlueprint.push("simp [" + names.join(", ") + "]",
       "simp_all [" + names.join(", ") + "]");
-  programs.push("rfl", "assumption", "trivial", "simp", "simp_all",
-    "decide", "omega", "aesop", "exact?", "constructor <;> assumption",
-    "constructor <;> simp", "intro h\nexact h",
-    "simp_all\nall_goals omega", "simp\nall_goals aesop");
+  const generic = [
+    "rfl", "assumption", "trivial", "simp_all", "simp",
+    "decide", "exact?", "omega", "aesop",
+    "constructor <;> assumption", "constructor <;> simp",
+    "intro h\nexact h", "simp_all\nall_goals omega",
+    "simp\nall_goals aesop",
+  ];
+  // Ask Lean's OWN tactic backtracking to select a proof in one bounded
+  // compiler invocation. A failed branch rolls back its goal state. This
+  // amortizes Lake/toolchain startup across many alternative derivations.
+  // Subsequent candidate scripts remain available for finer goal diagnosis.
+  const solve = candidates => "solve\n" +
+    candidates.map(tactic => "| " + tactic.split("\n").join("\n  ")).join("\n");
+  const programs = [];
+  if (fromBlueprint.length) programs.push(solve([...fromBlueprint, ...generic]));
+  programs.push(solve(generic));
+  programs.push(...fromBlueprint, ...generic);
   return Object.freeze([...new Set(programs)]);
 }
 
