@@ -9,7 +9,8 @@ const commonProofProperties = {
   hints:{type:"array",maxItems:32,items:qualified},
   proposalFiles:{type:"array",maxItems:16,uniqueItems:true,items:{type:"string",pattern:"^proofs/.+\\.(?:tactic|leanproof)$"}},
   maxAttempts:{type:"integer",minimum:1,maximum:64},
-  timeoutMs:{type:"integer",minimum:1000,maximum:180000},
+  timeoutMs:{type:"integer",minimum:1000,maximum:1800000},
+  totalTimeoutMs:{type:"integer",minimum:1000,maximum:1800000},
 };
 export const leanProofSearchRequestSchema = {
   $id:"lean/proof-search-request",title:"LeanProofSearchRequest",
