@@ -31,6 +31,7 @@ function appendProofEvidence(dataRoot, result, context) {
         candidateDigest:result.candidateDigest ?? null,
         attemptCount:result.attempts?.length ?? 0,
         taskId:result.task?.taskId ?? null,
+        taskBundleDigest:result.task?.taskBundleDigest ?? null,
         venueAccepted:false,
         ended:result.ended ?? new Date().toISOString(),
     };
