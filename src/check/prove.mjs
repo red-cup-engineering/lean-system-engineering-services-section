@@ -156,7 +156,7 @@ export function proofPrograms(hints = []) {
   // amortizes Lake/toolchain startup across many alternative derivations.
   // Subsequent candidate scripts remain available for finer goal diagnosis.
   const solve = candidates => "solve\n" +
-    candidates.map(tactic => "| " + tactic.split("\n").join("\n  ")).join("\n");
+    candidates.map(tactic => "  | " + tactic.split("\n").join("\n    ")).join("\n");
   const programs = [];
   if (fromBlueprint.length) programs.push(solve([...fromBlueprint, ...generic]));
   programs.push(solve(generic));
