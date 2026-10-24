@@ -238,7 +238,10 @@ async function retainProofAttempt(root, result) {
     JSON.stringify({kind:"metroplat.lean.private-proof-attempt",
       id:result.id,sourceDigest:result.sourceDigest,
       candidateDigest:result.candidateDigest ?? null,
-      task:result.task ?? null,started:result.started,ended:result.ended,
+      task:result.task ?? null,originalAxioms:result.originalAxioms ?? null,
+      blockerCode:result.blockerCode ?? null,
+      baselineDiagnostic:result.baselineDiagnostic ?? null,
+      started:result.started,ended:result.ended,
       hints:result.hints ?? [],attempts:result.attempts,
       resumedFrom:result.resumedFrom ?? null,
       frontier:result.frontier ?? [],
@@ -281,7 +284,8 @@ async function readPreviousProofAttempt(root, runId, sourceDigest, task) {
         (task === undefined ? prior.task !== null :
           prior.task?.taskId !== task.taskId ||
           prior.task?.challengeDigest !== task.challengeDigest ||
-          prior.task?.manifestDigest !== task.manifestDigest))
+          prior.task?.manifestDigest !== task.manifestDigest ||
+          prior.task?.taskBundleDigest !== task.taskBundleDigest))
       throw new TypeError("lean-prove: prior proof Work belongs to a different theorem/task");
     if (depth === 0) initialFrontier = Array.isArray(prior.frontier) ? prior.frontier : [];
     for (const attempt of prior.attempts)
@@ -298,6 +302,10 @@ function taskIdentity(task) {
   return Object.freeze({
     taskId:task.taskId, taskMode:task.taskMode, sourceTheorem:task.sourceTheorem,
     challengeDigest:task.challengeDigest, manifestDigest:task.manifestDigest,
+    taskBundleDigest:task.taskBundleDigest,
+    rewardTargetId:task.rewardTargetId,
+    publisherIndexState:task.publisherIndexState,
+    publisherSourceRevision:task.publisherSourceRevision,
     environmentIdentity:task.environmentIdentity,
     dependencyIdentity:task.dependencyIdentity,
   });
