@@ -3,17 +3,28 @@ import { proofTargetSchema, leanCheckResultSchema } from "./schema.mjs";
 
 const text = {type:"string",minLength:1};
 const qualified = {type:"string",pattern:"^[A-Za-z_][A-Za-z0-9_']*(?:\\.[A-Za-z_][A-Za-z0-9_']*)*$"};
+const commonProofProperties = {
+  project:text,
+  hints:{type:"array",maxItems:32,items:qualified},
+  maxAttempts:{type:"integer",minimum:1,maximum:64},
+  timeoutMs:{type:"integer",minimum:1000,maximum:180000},
+};
 export const leanProofSearchRequestSchema = {
   $id:"lean/proof-search-request",title:"LeanProofSearchRequest",
-  type:"object",additionalProperties:false,required:["project","file","declaration"],
-  properties:{
-    project:text,file:{type:"string",pattern:"\\.lean$"},declaration:qualified,
-    proofTarget:proofTargetSchema,
-    blueprintLabel:{type:"string",pattern:"^[a-z]+:[a-z0-9-]+$"},
-    hints:{type:"array",maxItems:32,items:qualified},
-    maxAttempts:{type:"integer",minimum:1,maximum:64},
-    timeoutMs:{type:"integer",minimum:1000,maximum:180000},
-  },
+  oneOf:[
+    {type:"object",additionalProperties:false,required:["project","file","declaration"],
+      properties:{
+        ...commonProofProperties,
+        file:{type:"string",pattern:"\\.lean$"},declaration:qualified,
+        proofTarget:proofTargetSchema,
+        blueprintLabel:{type:"string",pattern:"^[a-z]+:[a-z0-9-]+$"},
+      }},
+    {type:"object",additionalProperties:false,required:["project","taskDirectory"],
+      properties:{
+        ...commonProofProperties,
+        taskDirectory:text,
+      }},
+  ],
 };
 export const leanProofSearchResultSchema = {
   $id:"lean/proof-search-result",title:"LeanProofSearchResult",
@@ -22,7 +33,10 @@ export const leanProofSearchResultSchema = {
     kind:{const:"metroplat.lean.proof-search-result"},
     id:text,state:{enum:["candidate-compiled","unresolved","failed"]},
     file:text,project:text,declaration:qualified,sourceDigest:text,candidateDigest:text,
-    axiomReadout:{type:"string"},
+    axiomReadout:{type:"string"},mainLean:{type:"string"},
+    task:{type:"object",required:["taskId","taskMode","sourceTheorem","challengeDigest","manifestDigest"],
+      properties:{taskId:text,taskMode:text,sourceTheorem:text,challengeDigest:text,manifestDigest:text,
+        environmentIdentity:text,dependencyIdentity:text}},
     axioms:{type:"array",items:qualified},
     proofTarget:leanCheckResultSchema.properties.proofTarget,
     candidateSource:{type:"string"},proofProgram:{type:"string"},proofTerm:{type:"string"},
