@@ -94,6 +94,12 @@
     "./conformance-gate": "./src/conformance-gate.mjs",
     "./check/proof-target": {
       "import": "./src/check/proof-target.mjs"
+    },
+    "./check/prove": {
+      "import": "./src/check/prove.mjs"
+    },
+    "./check/prove-schema": {
+      "import": "./src/check/prove-schema.mjs"
     }
   },
   "files": [
