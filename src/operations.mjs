@@ -21,7 +21,7 @@ export function leanCheckOperations({ dataRoot }) {
         writes: [leanCheckFeed],
         effects: { class: "external", replay: "coordinated", coordination: "coordination-required", deterministic: "unmeasured", totality: "partial" },
         summary: "Run a bounded Lake build, Lean file check, or declaration inspection in lean.slice with durable compiler evidence.",
-        description: "Domain: { project, mode?: build|file|declaration, timeoutMs?: integer }. Build accepts targets?: string[]; file requires file: project-relative .lean path; declaration requires module and declaration: qualified Lean names. No arbitrary command or args. Results include stdout, stderr, exitCode, diagnostics, and for declaration mode actual axioms and direct dependencies after rebuilding the requested module. Only one check runs on the node; concurrency is refused with runningId.",
+        description: "Domain: { project, mode?: build|file|declaration, timeoutMs?: integer }. Build accepts targets?: string[]; file requires file: project-relative .lean path; declaration requires qualified module and declaration names and may carry proofTarget: { platform, targetId, taskDigest, challenge:{path,digest}, toolchain, manifestDigest, permittedAxioms }. The optional challenge/toolchain/manifest SHA-256 pin and collected axiom policy preflight fail closed, but are NOT an external challenge Comparator, publisher authentication, independent proof receipt, or award. No arbitrary command or args. Only one bounded check runs per node; concurrency is refused with runningId.",
         run: async (input, _args, context) => {
             const plan = planLeanCheck({ ...(input ?? {}), id: randomUUID() });
             const requestedAt = new Date().toISOString();
