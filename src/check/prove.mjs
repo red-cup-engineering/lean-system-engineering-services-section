@@ -13,6 +13,7 @@ import { runLeanCheck } from "./run.mjs";
 import { validateProofTarget, observeProofTarget, judgeProofTarget } from "./proof-target.mjs";
 import { readLeanWorkspaceCore } from "../workspace/service.mjs";
 import { readConjecturesTask, renderConjecturesCandidate } from "./conjectures-task.mjs";
+import { verifyConjecturesCandidate } from "./conjectures-verify.mjs";
 
 const qualified = /^[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*$/u;
 const hole = /:=\s*by\s+sorry\b/gu;
@@ -329,15 +330,154 @@ function taskIdentity(task) {
   });
 }
 
+
+/**
+ * Bounty source-problem search must run through the PUBLISHER'S exact trusted
+ * environment and Comparator, not the internal arbitrary Lake project. No
+ * signing, payment or submission occurs. The remaining proof motion is the
+ * same source proposals, Lean tactics, resumption and private Work artifacts.
+ */
+async function runOfficialConjecturesSearch(plan, root, task, validatorRoot, taskRoot) {
+  const started = new Date().toISOString();
+  const began = Date.now();
+  const originalBytes = await readFile(task.challengePath);
+  if (hash(originalBytes) !== task.challengeDigest)
+    throw new TypeError("lean-prove: publisher challenge changed after admission");
+  const sourceDigest = hash(originalBytes);
+  const proposals = await readProofProposals(root,plan.proposalFiles ?? []);
+  const byProgram = new Map();
+  for (const proposal of proposals) {
+    const values = byProgram.get(proposal.program) ?? [];
+    values.push(Object.freeze({path:proposal.path,digest:proposal.digest}));
+    byProgram.set(proposal.program,Object.freeze(values));
+  }
+  const previous=await readPreviousProofAttempt(root,plan.resumeFrom,sourceDigest,task);
+  const skipped=new Set(previous?.attempted ?? []);
+  const programs=[...new Set([...proposals.map(p=>p.program),...proofPrograms(plan.hints)])]
+    .filter(program=>!skipped.has(program));
+  const queued=new Set([...programs,...skipped]);
+  const attempts=[];
+  const base={
+    kind:"metroplat.lean.proof-search-result",id:plan.id,
+    project:root,file:plan.taskDirectory+"/Main.lean",
+    declaration:task.targetDeclaration,task:taskIdentity(task),
+    sourceDigest,hints:Object.freeze([...plan.hints]),
+    ...(previous ? {resumedFrom:previous.id} : {}),
+    started,venueAccepted:false,
+  };
+  if (!validatorRoot)
+    return retainProofAttempt(root,Object.freeze({
+      ...base,state:"blocked",attempts:Object.freeze([]),
+      blockerCode:"official-conjectures-verifier-not-installed",
+      baselineDiagnostic:"Configure the operator-owned pinned Conjectures verifier checkout before claiming any hard-target Lean result.",
+      ended:new Date().toISOString(),
+    }));
+  const folder=path.join(root,".lake","proof-search");
+  await mkdir(folder,{recursive:true});
+  const scratch=path.join(folder,"Conjectures_"+plan.id.replaceAll("-","_")+".Main.lean");
+  let infrastructureBlocker=null;
+  try {
+    for (let index=0;index<programs.length && index<plan.maxAttempts;index++) {
+      const remaining=plan.totalTimeoutMs-(Date.now()-began);
+      if (remaining<1000) break;
+      if (hash(await readFile(task.challengePath))!==task.challengeDigest)
+        throw new TypeError("lean-prove: original published theorem changed mid-search");
+      const program=programs[index];
+      const proof=replaceProofHole(task.main,program);
+      // This is exactly the Main.lean source expected by the official
+      // validator, not a forged Challenge or modified theorem statement.
+      const rendered=renderConjecturesCandidate(task,proof);
+      await writeFile(scratch,rendered.mainLean,{mode:0o600});
+      let verdict;
+      try {
+        verdict=await verifyConjecturesCandidate({
+          task,submissionPath:scratch,validatorRoot,
+          timeoutMs:Math.min(remaining,plan.timeoutMs),
+        });
+      } catch(error) {
+        infrastructureBlocker=error instanceof Error ? error.message : String(error);
+        break;
+      }
+      const text=String(verdict.report?.stderr_tail ?? "")+"\n"+
+        String(verdict.report?.stdout_tail ?? "")+"\n"+
+        String(verdict.diagnostic ?? "");
+      const goals=remainingLeanGoals(text);
+      attempts.push(Object.freeze({
+        index,program,state:verdict.status,
+        reasonCode:verdict.reasonCode,
+        ...(verdict.reportDigest ? {verifierReportDigest:verdict.reportDigest}:{}),
+        ...(byProgram.has(program) ? {sourceProposals:byProgram.get(program)}:{}),
+        ...(goals.length ? {openGoals:goals}:{}),
+        ...(verdict.status==="verified-locally" ? {} : {diagnostic:text.slice(-2500)}),
+      }));
+      if (verdict.status==="verified-locally") {
+        const after=await readConjecturesTask(root,plan.taskDirectory,{taskRoot});
+        if (after.taskBundleDigest!==task.taskBundleDigest ||
+            after.challengeDigest!==task.challengeDigest ||
+            after.buildProvenanceDigest!==task.buildProvenanceDigest)
+          throw new TypeError("lean-prove: publisher's task version changed during kernel verification");
+        for(const proposal of proposals)
+          if(hash(await readFile(path.join(root,proposal.path)))!==proposal.digest)
+            throw new TypeError("lean-prove: source-authored proof changed while Lean was checking it");
+        const candidateArtifact=await retainCandidateSource(root,proof,".Main.lean");
+        const reportSource=JSON.stringify(verdict.report,null,2)+"\n";
+        const reportArtifact=await retainCandidateSource(root,reportSource,".verifier.json");
+        return retainProofAttempt(root,Object.freeze({
+          ...base,state:"venue-verified-locally",
+          ...candidateArtifact,mainLean:proof,candidateSource:proof,
+          proofProgram:program,
+          proofTerm:"by\n  "+program.split("\n").join("\n  "),
+          ...(byProgram.has(program) ? {sourceProposals:byProgram.get(program)}:{}),
+          verifier:"conjectures-official-local-verifier",
+          verifierReportDigest:reportArtifact.candidateDigest,
+          verifierReportPath:reportArtifact.candidatePath,
+          verifiedLocally:true,attempts:Object.freeze(attempts),
+          ended:new Date().toISOString(),
+          note:"Official local Conjectures Comparator and Lean kernel accepted this source under the exact task/build pins. Live submission and reward review remain independent.",
+        }));
+      }
+      if(verdict.status==="blocked") {
+        infrastructureBlocker=verdict.reasonCode;
+        break;
+      }
+      // Genuine Lean goals may suggest additional tactics. A rejected
+      // candidate never becomes a proof and may not advance market Work.
+      if(goals.length && programs.length<160) {
+        const suffixes=["assumption","simp","omega","aesop","grind"];
+        const additions=suffixes.map(t=>program+"\nall_goals "+t).filter(p=>!queued.has(p));
+        additions.forEach(p=>queued.add(p));
+        programs.splice(index+1,0,...additions);
+      }
+    }
+    return retainProofAttempt(root,Object.freeze({
+      ...base,state:infrastructureBlocker ? "blocked" : "unresolved",
+      attempts:Object.freeze(attempts),
+      ...(infrastructureBlocker ? {blockerCode:"official-verifier-unavailable",
+          baselineDiagnostic:infrastructureBlocker}:{}),
+      frontier:Object.freeze(attempts.filter(a=>a.openGoals?.length)
+        .sort((a,b)=>a.openGoals.length-b.openGoals.length).slice(0,3)
+        .map(a=>Object.freeze({program:a.program,openGoals:a.openGoals}))),
+      ended:new Date().toISOString(),
+      note:infrastructureBlocker ? "No compiler conclusion: the original verifier or its pinned environment was unavailable." :
+        "No locally verified proof found within the authorized computation budget. Retain genuine verifier observations for the next research move.",
+    }));
+  } finally {
+    await unlink(scratch).catch(error=>{if(error?.code!=="ENOENT")throw error});
+    await rmdir(folder).catch(error=>{if(!["ENOENT","ENOTEMPTY"].includes(error?.code))throw error});
+  }
+}
+
 /**
  * Search, without modifying the original. Each alternative invokes the actual
  * existing lean-check/Lake executor, which enforces one concurrent node scope,
  * memory and time limits. The worker is never simulated by this service.
  */
-export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceRead = readLeanWorkspaceCore, taskRoot} = {}) {
+export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceRead = readLeanWorkspaceCore, taskRoot, validatorRoot} = {}) {
   const root = await realpath(plan.project);
   const task = plan.taskDirectory === undefined ? undefined :
     await readConjecturesTask(root, plan.taskDirectory, {taskRoot});
+  if (task !== undefined)
+    return runOfficialConjecturesSearch(plan,root,task,validatorRoot,taskRoot);
   const sourcePath = task === undefined ?
     await realpath(path.join(root, plan.file)) : task.challengePath;
   // A normal theorem belongs to the selected Lean project. A Conjectures
