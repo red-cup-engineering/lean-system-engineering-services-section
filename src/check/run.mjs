@@ -223,7 +223,7 @@ export async function runLeanCheck(plan, options = {}) {
             judgeProofTarget(plan.proofTarget, targetBefore, targetAfter, inspection);
         const succeeded = compilerSucceeded && (proofTarget === undefined || proofTarget.status === "preflight-passed");
         return Object.freeze({ kind: "metroplat.lean.check-result", id: plan.id,
-            state: timedOut ? "timed-out" : succeeded ? "succeeded" : "failed",
+            state: timedOut ? "timed-out" : succeeded ? "succeeded" : compilerSucceeded && proofTarget?.status === "refused" ? "refused" : "failed",
             project: plan.project, mode: plan.mode ?? "build", ...(plan.targets === undefined ? {} : { targets: plan.targets }),
             ...(source === undefined ? {} : { source, sourceChanged }),
             ...(plan.program === undefined ? {} : { program: plan.program, module: plan.module, declaration: plan.declaration }),
