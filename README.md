@@ -58,3 +58,44 @@ remain in `obsmetrologia-theorem-audit-service`.
 Lean/Lake command claims through directory `write` are retired and explicitly
 refused. Use `lean-check`; arbitrary command and shell-argument inputs are not
 compiler actions. Workspace read and content projection remain available.
+
+## External proof-target preflight (branch candidate)
+
+For an external proof challenge, the existing **declaration** check may carry an
+optional `proofTarget`. This is a caller-attributed source snapshot, not a new
+bounty registry or an assertion that the publisher approved the task:
+
+- `platform`: exact https task URL; `targetId`: publisher's task identifier;
+  `taskDigest`: SHA-256 of the externally acquired task record. The publisher,
+  the task digest's acquisition and the caller's authority are **not**
+  authenticated by this service.
+- `challenge: {path, digest}`: in-project relative POSIX `.lean` source path
+  and SHA-256 of its exact bytes; `toolchain`: exact text of the pinned
+  `lean-toolchain`; `manifestDigest`: SHA-256 of `lake-manifest.json`.
+- `permittedAxioms`: a caller-supplied list of permitted transitive kernel
+  axiom names, independently populated from the particular venue's current rules.
+  `sorryAx` is never permissible. This is intentionally **not** the
+  Obsmetrologia-specific Axiom Law, which remains with Proof Work Orders.
+
+The input schema allows this option only on `mode: "declaration"` checks.
+Before a Lean run, the existing bounded worker refuses missing, changed or
+escaping challenge/toolchain/manifest files; after the run it checks the exact
+bytes again and compares Lean's actual `collectAxioms` report with the declared
+policy. A mismatch refuses success and withholds the admitted declaration
+inspection. The result's `proofTarget.status` is `preflight-passed` or
+`refused`, with exact findings and a list of unverified obligations.
+
+**Not established by preflight:** the claimed bounty's authenticity, full
+workspace/import immutability, challenge/solution equivalence under the venue's
+Comparator, forbidden-import or transitive dependency rules, mathematical
+novelty, third-party acceptance, submission rights, or actual payment. A real
+delivery therefore still requires the publisher's independent checker, human
+review where applicable, and the original Opportunity Services commercial
+receiving. Source tests are not proof that a MetroPlat host has installed and
+executed this branch. Existing Science Proof Work Orders and Blueprint/Verso
+receipts are preserved; no duplicate proof workflow is created.
+
+Original receivers: [Proof Science #2](https://github.com/lenticule-science/proof-science-services-section/issues/2),
+[Lean service qualification #14](https://github.com/red-cup-engineering/computer-code-engineering-services-section/issues/14),
+[Opportunity Work #35](https://github.com/561-group/561-group-opportunity-services-section/issues/35),
+and [Obsmetrologia CI incident #84](https://github.com/lenticule-science/obsmetrologia-science-services-section/issues/84).
