@@ -33,7 +33,7 @@ function fields(value, expected, where) {
   for (const key of expected) if (!Object.hasOwn(value, key)) reject(where + "." + key, "is required");
 }
 export function validateProofTarget(value) {
-  fields(value, ["platform","targetId","taskDigest","challenge","toolchain","manifestDigest","permittedAxioms"], "target");
+  fields(value, ["platform","targetId","taskDigest","challenge","toolchain","manifestDigest","sourceDigest","permittedAxioms"], "target");
   const platform = label(value.platform, "platform");
   let url;
   try { url = new URL(platform); } catch { reject("platform", "must be an https URL"); }
@@ -48,13 +48,14 @@ export function validateProofTarget(value) {
   const challenge = Object.freeze({path:challengePath, digest:digest(value.challenge.digest,"challenge.digest")});
   const toolchain = label(value.toolchain, "toolchain");
   const manifestDigest = digest(value.manifestDigest, "manifestDigest");
+  const sourceDigest = digest(value.sourceDigest, "sourceDigest");
   if (!Array.isArray(value.permittedAxioms) || value.permittedAxioms.some(a => typeof a !== "string" || !leanName.test(a)))
     reject("permittedAxioms", "must contain Lean constant names");
   if (new Set(value.permittedAxioms).size !== value.permittedAxioms.length)
     reject("permittedAxioms", "must not repeat axioms");
   if (value.permittedAxioms.some(a => a === "sorryAx" || a.endsWith(".sorryAx")))
     reject("permittedAxioms", "cannot authorize sorryAx");
-  return Object.freeze({platform,targetId,taskDigest,challenge,toolchain,manifestDigest,
+  return Object.freeze({platform,targetId,taskDigest,challenge,toolchain,manifestDigest,sourceDigest,
     permittedAxioms:Object.freeze([...value.permittedAxioms])});
 }
 
@@ -142,6 +143,8 @@ export async function observeProofTarget(project, binding) {
   try { localSources = await snapshotLeanSources(root); }
   catch (error) { localSourceError = error instanceof Error ? error.message : "local-source-snapshot-error"; }
   const findings = [];
+  if (localSources !== undefined && localSources.digest !== target.sourceDigest)
+    findings.push({code:"local-source-digest-mismatch",expected:target.sourceDigest,actual:localSources.digest});
   if (localSourceError !== undefined) findings.push({code:"local-source-snapshot-unavailable",reason:localSourceError});
   for (let i=0; i<files.length; i+=1) {
     if (files[i].code) findings.push({code:files[i].code,path:files[i].path});
@@ -176,6 +179,7 @@ export function judgeProofTarget(binding, before, after, inspection) {
     status:findings.length ? "refused" : "preflight-passed",
     platform:target.platform,targetId:target.targetId,taskDigest:target.taskDigest,
     challenge:target.challenge,toolchain:target.toolchain,manifestDigest:target.manifestDigest,
+    sourceDigest:target.sourceDigest,
     permittedAxioms:target.permittedAxioms,
     ...(before?.localSources ? {localSources:before.localSources} : {}),
     findings:Object.freeze(findings),unchecked});
