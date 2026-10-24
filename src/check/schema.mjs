@@ -5,7 +5,7 @@ const names = { type: "array", items: text };
 const common = { project: text, timeoutMs: { type: "integer", minimum: 1, maximum: maximumLeanCheckTimeoutMs } };
 // This is a caller-attributed target snapshot, not a registry-issued proof certificate.
 const shaDigest = { type: "string", pattern: "^sha256:[a-f0-9]{64}$" };
-const proofTarget = {
+export const proofTargetSchema = {
     type: "object", additionalProperties: false,
     required: ["platform", "targetId", "taskDigest", "challenge", "toolchain", "manifestDigest", "sourceDigest", "permittedAxioms"],
     properties: {
@@ -24,7 +24,7 @@ export const leanCheckRequestSchema = {
         { type: "object", required: ["project", "mode", "file"], additionalProperties: false,
           properties: { ...common, mode: { const: "file" }, file: text } },
         { type: "object", required: ["project", "mode", "module", "declaration"], additionalProperties: false,
-          properties: { ...common, mode: { const: "declaration" }, module: text, declaration: text, proofTarget } },
+          properties: { ...common, mode: { const: "declaration" }, module: text, declaration: text, proofTarget: proofTargetSchema } },
     ],
 };
 export const leanCheckResultSchema = {
