@@ -105,7 +105,9 @@ export async function readConjecturesTask(project, taskDirectory) {
     challengeDigest:sha(members["Challenge.lean"]), manifestDigest:sha(rawManifest),
     dependencyIdentity:manifest.dependency_identity_sha256,
     environmentIdentity:manifest.environment_identity_sha256,
-    allowedAxioms:Object.freeze([...allowed]), maxSubmissionBytes:manifest.max_submission_bytes,
+    allowedAxioms:Object.freeze([...allowed]),
+    forbiddenDependencies:Object.freeze([...(manifest.forbidden_dependencies ?? [])]),
+    maxSubmissionBytes:manifest.max_submission_bytes,
     header, footer, main, originalChallenge:challenge,
   });
 }
