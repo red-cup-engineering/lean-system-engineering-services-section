@@ -399,9 +399,11 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         try {
           await writeFile(privateFile, selectedSource, {flag:"wx",mode:0o600});
         } catch (error) {
-          if (error?.code !== "EEXIST" ||
+          if (error?.code !== "EEXIST") throw error;
+          const existing = await lstat(privateFile);
+          if (!existing.isFile() || existing.isSymbolicLink() ||
               hash(await readFile(privateFile)) !== candidateDigest)
-            throw error;
+            throw new TypeError("lean-prove: content-addressed artifact path is not the proved file");
         }
         return Object.freeze({
           kind: "metroplat.lean.proof-search-result", id:plan.id,
