@@ -46,8 +46,11 @@ function json(bytes, name) {
  * Retaining those bytes makes the emitted problem exactly the published
  * Challenge, rather than an invented weaker theorem or substitute notation.
  */
-export async function readConjecturesTask(project, taskDirectory) {
-  const root = await realpath(project);
+export async function readConjecturesTask(project, taskDirectory, {taskRoot} = {}) {
+  // An installed task checkout is authoritative for task bytes; the Lean
+  // workspace may be elsewhere. The operator, not a user-supplied RPC path,
+  // selects this root through the existing CONJECTURES_TASKS_ROOT binding.
+  const root = await realpath(taskRoot ?? project);
   const relative = validRelative(taskDirectory);
   const dir = await realpath(path.join(root, relative));
   const delta = path.relative(root, dir);
