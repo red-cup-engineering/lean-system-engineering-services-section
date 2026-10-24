@@ -10,6 +10,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdir, readFile, realpath, unlink, writeFile, rmdir } from "node:fs/promises";
 import { planLeanCheck } from "./plan.mjs";
 import { runLeanCheck } from "./run.mjs";
+import { validateProofTarget, observeProofTarget, judgeProofTarget } from "./proof-target.mjs";
 import { readLeanWorkspaceCore } from "../workspace/service.mjs";
 
 const qualified = /^[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*$/u;
@@ -43,7 +44,7 @@ export function planLeanProof(input) {
        !/^[a-z]+:[a-z0-9-]+$/u.test(input.blueprintLabel)))
     throw new TypeError("lean-prove: blueprintLabel must be an exact source claim label");
   for (const key of Object.keys(input))
-    if (!["project", "file", "id", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints"].includes(key))
+    if (!["project", "file", "id", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints", "proofTarget"].includes(key))
       throw new TypeError("lean-prove: unexpected field " + key);
   return Object.freeze({
     kind: "metroplat.lean.proof-search-plan", id, project: path.resolve(input.project), file,
@@ -52,6 +53,7 @@ export function planLeanProof(input) {
     timeoutMs: bounded(input.timeoutMs ?? 60_000, "timeoutMs", 1000, 180_000),
     hints: Object.freeze(qualifiedHints(input.hints ?? [])),
     ...(input.blueprintLabel === undefined ? {} : {blueprintLabel:input.blueprintLabel}),
+    ...(input.proofTarget === undefined ? {} : {proofTarget:validateProofTarget(input.proofTarget)}),
   });
 }
 
@@ -120,6 +122,24 @@ export function remainingLeanGoals(message) {
   return Object.freeze(tail.split(/(?=\n(?:case\s+\S+|⊢))/u)
     .map(s => s.trim()).filter(s => s.includes("⊢")).slice(0, 16));
 }
+/**
+ * Read the compiler's own #print axioms output for precisely one target.
+ * Unknown output syntax is not a no-axioms receipt.
+ */
+export function readPrintedAxioms(output, declaration) {
+  const rows = String(output ?? "").split(/\r?\n/u)
+    .filter(line => line.includes(declaration) &&
+      (line.includes("depends on axioms:") ||
+       line.includes("does not depend on any axioms")));
+  if (rows.length !== 1) return null;
+  if (rows[0].includes("does not depend on any axioms")) return Object.freeze([]);
+  const match = /depends on axioms:\s*\[([^\]]*)\]/u.exec(rows[0]);
+  if (match === null) return null;
+  const names = match[1].split(",").map(x => x.trim()).filter(Boolean);
+  if (names.some(x => !qualified.test(x))) return null;
+  return Object.freeze([...new Set(names)].sort());
+}
+
 function diagnostic(result) {
   const texts = [...(result?.errors ?? []), ...(result?.compilerErrors ?? [])]
     .map(x => typeof x === "string" ? x : x.message ?? JSON.stringify(x)).filter(Boolean);
@@ -142,6 +162,13 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   const original = originalBytes.toString("utf8");
   if ([...original.matchAll(hole)].length !== 1)
     throw new TypeError("lean-prove: original source lacks unique proof hole");
+  // Reuse the exact challenge/task pins already shared by the original
+  // compiler-check API. Proof construction and qualification are one workflow.
+  const targetBefore = plan.proofTarget === undefined ? undefined :
+    await observeProofTarget(root, plan.proofTarget);
+  if (targetBefore !== undefined && !targetBefore.matched)
+    throw new Error("lean-prove: external proof target source commitments do not match this workspace: " +
+      targetBefore.findings.map(x => x.code).join(", "));
   const fromBlueprint = plan.blueprintLabel === undefined ? [] :
     proofHintsFromBlueprint(workspaceRead(root), plan.blueprintLabel, plan.declaration);
   const hints = [...new Set([...fromBlueprint, ...plan.hints])].slice(0, 32);
@@ -170,13 +197,26 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         timeoutMs: plan.timeoutMs,
       });
       const result = await check(planCheck);
-      const compiled = result?.state === "succeeded" &&
-        !String(result?.stdout ?? "").includes("sorryAx") &&
-        !String(result?.stderr ?? "").includes("sorryAx");
-      const message = compiled ? "" : diagnostic(result);
+      const compilerSucceeded = result?.state === "succeeded";
+      const readout = String(result?.stdout ?? "") + "\n" + String(result?.stderr ?? "");
+      const axioms = compilerSucceeded ? readPrintedAxioms(readout, plan.declaration) : null;
+      const targetAfter = compilerSucceeded && targetBefore !== undefined ?
+        await observeProofTarget(root, plan.proofTarget) : undefined;
+      const targetVerdict = targetAfter === undefined ? undefined :
+        judgeProofTarget(plan.proofTarget, targetBefore, targetAfter,
+          axioms === null ? undefined : {axioms});
+      const compiled = compilerSucceeded && axioms !== null &&
+        !axioms.includes("sorryAx") &&
+        (targetVerdict === undefined || targetVerdict.status === "preflight-passed");
+      const message = compiled ? "" : (axioms === null && compilerSucceeded
+        ? "Lean's target axiom readout was missing or unrecognized"
+        : targetVerdict?.status === "refused"
+        ? targetVerdict.findings.map(x => x.code).join(", ") : diagnostic(result));
       const goals = remainingLeanGoals(message);
       attempts.push(Object.freeze({
-        index, program, state: result?.state ?? "failed",
+        index, program, state: compiled ? "candidate-compiled" : result?.state ?? "failed",
+        ...(axioms === null ? {} : {axioms}),
+        ...(targetVerdict === undefined ? {} : {proofTargetStatus:targetVerdict.status}),
         ...(compiled ? {} : {diagnostic:message,openGoals:goals}),
       }));
       // Actual compiler goal states, not source-text guesses, warrant
@@ -194,7 +234,8 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         return Object.freeze({
           kind: "metroplat.lean.proof-search-result", id:plan.id,
           state:"candidate-compiled", project:root, file:plan.file,
-          declaration:plan.declaration, axiomReadout:String(result.stdout ?? "").slice(-2500),
+          declaration:plan.declaration, axioms, axiomReadout:readout.slice(-2500),
+          ...(targetVerdict === undefined ? {} : {proofTarget:targetVerdict}),
           sourceDigest:hash(originalBytes), candidateDigest:hash(candidate),
           proofProgram:program, candidateSource:candidate, hints:Object.freeze(hints),
           attempts:Object.freeze(attempts), started, ended:new Date().toISOString(),
@@ -202,7 +243,8 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           note:"Lean compiled this exact candidate. Axiom audit, exact external Comparator and mathematical correspondence remain distinct.",
         });
       }
-      if (result?.state === "refused" || result?.state === "timed-out") break;
+      if (result?.state === "refused" || result?.state === "timed-out" ||
+          targetVerdict?.status === "refused") break;
     }
     return Object.freeze({
       kind:"metroplat.lean.proof-search-result", id:plan.id, state:"unresolved",
