@@ -12,6 +12,7 @@ import { planLeanCheck } from "./plan.mjs";
 import { runLeanCheck } from "./run.mjs";
 import { validateProofTarget, observeProofTarget, judgeProofTarget } from "./proof-target.mjs";
 import { readLeanWorkspaceCore } from "../workspace/service.mjs";
+import { readConjecturesTask, renderConjecturesCandidate } from "./conjectures-task.mjs";
 
 const qualified = /^[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*$/u;
 const hole = /:=\s*by\s+sorry\b/gu;
@@ -29,13 +30,23 @@ function qualifiedHints(hints) {
 }
 export function planLeanProof(input) {
   const file = input?.file;
-  if (typeof input?.declaration !== "string" || !qualified.test(input.declaration))
-    throw new TypeError("lean-prove: target declaration must be an exact qualified Lean name");
-  if (typeof input?.project !== "string" || !input.project.trim() ||
+  const taskDirectory = input?.taskDirectory;
+  const isTask = taskDirectory !== undefined;
+  if (typeof input?.project !== "string" || !input.project.trim())
+    throw new TypeError("lean-prove: a pinned Lean project is required");
+  if (isTask) {
+    if (typeof taskDirectory !== "string" || !taskDirectory ||
+        taskDirectory.startsWith("/") || path.isAbsolute(taskDirectory) ||
+        taskDirectory.includes("\\") ||
+        taskDirectory.split("/").some(part => !part || part === "." || part === "..") ||
+        file !== undefined || input.declaration !== undefined ||
+        input.blueprintLabel !== undefined || input.proofTarget !== undefined)
+      throw new TypeError("lean-prove: choose either an original theorem or a Conjectures task bundle");
+  } else if (typeof input?.declaration !== "string" || !qualified.test(input.declaration) ||
       typeof file !== "string" || !file.endsWith(".lean") || path.isAbsolute(file) ||
       file.startsWith("-") || file.includes("\\") ||
       file.split("/").some(p => !p || p === "." || p === ".."))
-    throw new TypeError("lean-prove: existing in-project .lean source required");
+    throw new TypeError("lean-prove: existing in-project theorem source and declaration required");
   const id = input.id ?? randomUUID();
   if (typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9-]{0,60}$/u.test(id))
     throw new TypeError("lean-prove: invalid work id");
@@ -44,11 +55,12 @@ export function planLeanProof(input) {
        !/^[a-z]+:[a-z0-9-]+$/u.test(input.blueprintLabel)))
     throw new TypeError("lean-prove: blueprintLabel must be an exact source claim label");
   for (const key of Object.keys(input))
-    if (!["project", "file", "id", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints", "proofTarget"].includes(key))
+    if (!["project", "file", "taskDirectory", "id", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints", "proofTarget"].includes(key))
       throw new TypeError("lean-prove: unexpected field " + key);
   return Object.freeze({
-    kind: "metroplat.lean.proof-search-plan", id, project: path.resolve(input.project), file,
-    declaration:input.declaration,
+    kind: "metroplat.lean.proof-search-plan", id, project: path.resolve(input.project),
+    ...(isTask ? { taskDirectory, declaration:"Bounty.target" } :
+      { file, declaration:input.declaration }),
     maxAttempts: bounded(input.maxAttempts ?? 16, "maxAttempts", 1, 64),
     timeoutMs: bounded(input.timeoutMs ?? 60_000, "timeoutMs", 1000, 180_000),
     hints: Object.freeze(qualifiedHints(input.hints ?? [])),
@@ -146,6 +158,15 @@ function diagnostic(result) {
   return (texts.length ? texts.join("\n") : String(result?.stderr ?? result?.stdout ?? "")).slice(-2500);
 }
 
+function taskIdentity(task) {
+  return Object.freeze({
+    taskId:task.taskId, taskMode:task.taskMode, sourceTheorem:task.sourceTheorem,
+    challengeDigest:task.challengeDigest, manifestDigest:task.manifestDigest,
+    environmentIdentity:task.environmentIdentity,
+    dependencyIdentity:task.dependencyIdentity,
+  });
+}
+
 /**
  * Search, without modifying the original. Each alternative invokes the actual
  * existing lean-check/Lake executor, which enforces one concurrent node scope,
@@ -153,15 +174,18 @@ function diagnostic(result) {
  */
 export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceRead = readLeanWorkspaceCore} = {}) {
   const root = await realpath(plan.project);
-  const sourcePath = await realpath(path.join(root, plan.file));
+  const task = plan.taskDirectory === undefined ? undefined :
+    await readConjecturesTask(root, plan.taskDirectory);
+  const sourcePath = task === undefined ?
+    await realpath(path.join(root, plan.file)) : task.challengePath;
   const rel = path.relative(root, sourcePath);
   if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel))
     throw new TypeError("lean-prove: source escapes project");
   const originalBytes = await readFile(sourcePath);
   if (originalBytes.length > 131072) throw new TypeError("lean-prove: source too large");
-  const original = originalBytes.toString("utf8");
+  const original = task === undefined ? originalBytes.toString("utf8") : task.main;
   if ([...original.matchAll(hole)].length !== 1)
-    throw new TypeError("lean-prove: original source lacks unique proof hole");
+    throw new TypeError("lean-prove: exact target lacks unique proof hole");
   // Reuse the exact challenge/task pins already shared by the original
   // compiler-check API. Proof construction and qualification are one workflow.
   const targetBefore = plan.proofTarget === undefined ? undefined :
@@ -172,6 +196,8 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   const fromBlueprint = plan.blueprintLabel === undefined ? [] :
     proofHintsFromBlueprint(workspaceRead(root), plan.blueprintLabel, plan.declaration);
   const hints = [...new Set([...fromBlueprint, ...plan.hints])].slice(0, 32);
+  if (task !== undefined && hints.some(name => task.forbiddenDependencies.includes(name)))
+    throw new TypeError("lean-prove: source theorem or forbidden task dependency is a proof hint");
   // Base strategies are read from the actual library hints. When a tactic
   // exposes genuine unsolved goals, synthesize its *continuation* next.
   const programs = [...proofPrograms(hints)];
@@ -188,9 +214,12 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         throw new Error("lean-prove: source changed during search");
       const program = programs[index];
       const candidate = replaceProofHole(original, program);
-      // The admitted source remains exactly the candidate: only the private
-      // scratch adds Lean’s native transitive axiom query for the target name.
-      await writeFile(scratch, candidate + "\n#print axioms " + plan.declaration + "\n", {mode:0o600});
+      const output = task === undefined ? undefined : renderConjecturesCandidate(task, candidate);
+      // Compile the original theorem declaration. For a Conjectures task,
+      // only the trusted header/footer enter the scratch workspace; Main.lean
+      // is the generated declaration body, without any user imports.
+      const compiling = output === undefined ? candidate : output.compilerSource;
+      await writeFile(scratch, compiling + "\n#print axioms " + plan.declaration + "\n", {mode:0o600});
       const planCheck = planLeanCheck({
         id: ("proof-" + plan.id + "-" + index).slice(0, 80),
         project: root, mode: "file", file: scratchRelative,
@@ -207,6 +236,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           axioms === null ? undefined : {axioms});
       const compiled = compilerSucceeded && axioms !== null &&
         !axioms.includes("sorryAx") &&
+        (task === undefined || axioms.every(name => task.allowedAxioms.includes(name))) &&
         (targetVerdict === undefined || targetVerdict.status === "preflight-passed");
       const message = compiled ? "" : (axioms === null && compilerSucceeded
         ? "Lean's target axiom readout was missing or unrecognized"
@@ -233,8 +263,10 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           throw new Error("lean-prove: theorem changed during successful search");
         return Object.freeze({
           kind: "metroplat.lean.proof-search-result", id:plan.id,
-          state:"candidate-compiled", project:root, file:plan.file,
+          state:"candidate-compiled", project:root,
+          file:task === undefined ? plan.file : plan.taskDirectory + "/Main.lean",
           declaration:plan.declaration, axioms, axiomReadout:readout.slice(-2500),
+          ...(task === undefined ? {} : {task:taskIdentity(task),mainLean:candidate}),
           ...(targetVerdict === undefined ? {} : {proofTarget:targetVerdict}),
           sourceDigest:hash(originalBytes), candidateDigest:hash(candidate),
           proofProgram:program,
@@ -250,7 +282,9 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
     }
     return Object.freeze({
       kind:"metroplat.lean.proof-search-result", id:plan.id, state:"unresolved",
-      project:root, file:plan.file, declaration:plan.declaration,
+      project:root, file:task === undefined ? plan.file : plan.taskDirectory + "/Main.lean",
+      declaration:plan.declaration,
+      ...(task === undefined ? {} : {task:taskIdentity(task)}),
       sourceDigest:hash(originalBytes),
       hints:Object.freeze(hints), attempts:Object.freeze(attempts),
       frontier:Object.freeze(attempts.filter(a => a.openGoals?.length)
