@@ -116,3 +116,74 @@ and [Obsmetrologia CI incident #84](https://github.com/lenticule-science/obsmetr
 **Palomar**, under its [current submission standard](https://github.com/PalomarRegistry/PalomarPolicy/blob/main/CONTRIBUTING.md), requires a fully pinned public Git commit, formalization.yaml, Challenge/Solution and Comparator configuration. The actual Comparator statement match, replay by Lean and a separately implemented kernel, strict Challenge dependency policy, and independent review remain unverified by this local preflight. The existing Obsmetrologia Blueprint/Verso work and axiom law remain authoritative for subject mathematics; do not silently treat an external venue's axiom allowlist as equivalent to the internal law.
 
 The engineering handoff from proof-producing Science to the original Opportunity Work therefore preserves: *exact problem and task commitment → authoritative mathematical claim and source genealogy → source-pinned proof candidate → local compiler/axiom evidence → actual venue-specific independent verifier result → permitted submission/review → separately observed payout*. A `preflight-passed` result establishes only the bounded part of that chain.
+
+## Proof construction and locally verified bounty candidates
+
+The existing `lean-prove` MetroPlat project operation now has two *proof-producing*
+paths, not another theorem registry. For internal mathematics it accepts one
+exact `declaration` in a source-owned `.lean` file with one provisional
+`by sorry` hole, plus existing Blueprint predecessor lemmas and optional
+authorized `proofs/*.tactic` argument files. It **first compiler-inspects the
+original declaration** to confirm the selected theorem really depends on that
+hole, then tries source-authored derivations and native Lean tactics. The
+original statement is never edited; a valid result is saved privately under
+`.lake/proof-candidates/`. Incomplete searches retain real goal diagnostics
+in `.lake/proof-runs/` and may resume by `resumeFrom`. The common Work journal
+holds digests and status, not unpublished arguments.
+
+For a **Conjectures.io** task, operators supply two *separately installed*
+source checkouts (neither contains a credential, wallet nor signing key):
+
+- `CONJECTURES_TASKS_ROOT`: the original versioned task repository containing
+  `versions/<task-id>/`, `allowlist.json`, and `task-versions.json`;
+- `CONJECTURES_VALIDATOR_ROOT`: the publisher's real local verifier, with
+  its own already-pinned Lean, Mathlib, Comparator, kernel, production sandbox,
+  and task build cache.
+
+Pass the existing `lean-prove` operation `project`, relative
+`taskDirectory` (`versions/<task-id>`), and an authorized computation budget.
+Optionally provide source-owned `proposalFiles` as actual complete candidate
+derivations. The task loader admits the **publisher's** active registry version,
+uses its `task_bundle_sha256` (not our manifest hash) and the matching
+`build_provenance_sha256`, and retains the exact Challenge plus trusted
+SolutionHeader/Footer.
+
+Rather than compiling a purported solution under whichever local Lake project
+is convenient, this path invokes the *official* command, without signing or
+payment:
+
+```text
+python3 -m verifier verify --task <original-task-dir> \
+  --submission <private-generated-Main.lean> \
+  --expected-task-sha256 <publisher-task-bundle-sha256> \
+  --expected-build-provenance <published-build-provenance-sha256>
+```
+
+Each candidate runs under the original shared Lean worker admission lock and
+an explicit overall time budget. The publisher's verifier independently checks
+the exact statement, source dependencies, permitted axioms, Comparator and Lean
+kernel inside its production sandbox. **Only** a complete official local report
+with `accepted: true`, `reason_code: VERIFIED`, the exact task commitment,
+`checks.same_statement`, `checks.axioms_permitted`,
+`checks.lean_kernel_passed`, and `checks.production_sandbox` true
+can produce `venue-verified-locally`. Toolchain mismatch, missing verifier,
+unavailable sandbox, or broken imports yield `blocked`, not an invented
+mathematical refutation. An unsuccessful proof produces only an honest
+`unresolved` result with its real compiler feedback.
+
+The complete `Main.lean`, source-authored proof lineage and official verifier
+report are retained under the operator-owned `.lake/` project paths, never
+published in the shared proof-attempt journal. An authorized consumer can
+retrieve these artifacts and use the **original Conjectures miner** to build
+its exact two-entry submission bundle, only once it has independent account,
+AI-chat-log, payment and disclosure authorization. **Local verification does
+not spend a credit, submit a bounty, prove novelty, secure eligibility, pass
+human review or establish settlement.** The live validator can still reject
+or be closed to a locally listed task. Production installation/receiving
+remains unverified until an actual Coesite-hosted worker performs this call.
+
+The mathematically sound way to forget distinct proof histories is separately
+researched in [ProofSearchQuotient Science PR #19](https://github.com/lenticule-science/computer-science-obsmetrology-science-services-section/pull/19);
+that draft is not a checked theorem until an independent Lean host executes it.
+[SignCraft's source-replayed quotient audit](https://github.com/red-cup-engineering/signcraft/pull/17)
+is likewise not a substitute for a full external statement proof.
