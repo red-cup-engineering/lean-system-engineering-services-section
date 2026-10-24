@@ -33,7 +33,7 @@ export const leanProofSearchResultSchema = {
   properties:{
     kind:{const:"metroplat.lean.proof-search-result"},
     id:text,state:{enum:["candidate-compiled","unresolved","failed"]},
-    file:text,project:text,declaration:qualified,sourceDigest:text,candidateDigest:text,candidatePath:text,
+    file:text,project:text,declaration:qualified,sourceDigest:text,candidateDigest:text,candidatePath:text,receiptPath:text,
     axiomReadout:{type:"string"},mainLean:{type:"string"},
     sourceProposals:{type:"array",items:{type:"object",required:["path","digest"],
       properties:{path:text,digest:text}}},
