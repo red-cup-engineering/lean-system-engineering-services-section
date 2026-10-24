@@ -79,7 +79,7 @@ export async function snapshotLeanSources(root) {
   let totalBytes = 0;
   async function visit(dir, prefix = "") {
     const entries = (await readdir(dir, { withFileTypes: true }))
-      .sort((left, right) => left.name.localeCompare(right.name, "en"));
+      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
     for (const entry of entries) {
       if (entry.isDirectory() && omittedTrees.has(entry.name)) continue;
       const relative = prefix ? prefix + "/" + entry.name : entry.name;
@@ -106,7 +106,7 @@ export async function snapshotLeanSources(root) {
     }
   }
   await visit(root);
-  files.sort((left, right) => left.path.localeCompare(right.path, "en"));
+  files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
   const hash = createHash("sha256");
   for (const file of files)
     hash.update(file.path + "\0" + file.bytes + "\0" + file.digest + "\n");
