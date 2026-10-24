@@ -4,7 +4,7 @@
  */
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, readdir, stat } from "node:fs/promises";
 
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const leanName = /^[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*$/u;
@@ -12,7 +12,8 @@ const unchecked = Object.freeze([
   "publisher-task-authenticity",
   "challenge-solution-comparator",
   "forbidden-import-and-transitive-dependency-policy",
-  "complete-imported-source-snapshot",
+  "external-import-and-build-cache-reproducibility",
+  "immutable-worktree-and-runtime-isolation",
   "mathematical-novelty-and-external-review",
   "submission-authorization-and-payout",
 ]);
@@ -56,6 +57,63 @@ export function validateProofTarget(value) {
   return Object.freeze({platform,targetId,taskDigest,challenge,toolchain,manifestDigest,
     permittedAxioms:Object.freeze([...value.permittedAxioms])});
 }
+
+/**
+ * A bounded content snapshot of in-project Lean sources and proof configuration.
+ * This is NOT the entire import closure: external packages and .olean artifacts
+ * remain separate verifier obligations. File names and hashes determine the
+ * digest, independent of directory traversal order or checkout location.
+ */
+const omittedTrees = new Set([".git", ".lake", "node_modules", ".cache", ".venv", "dist", "build"]);
+const maxSourceFiles = 20_000;
+const maxSourceBytes = 256 * 1024 * 1024;
+function proofSource(pathname) {
+  const name = path.posix.basename(pathname);
+  return name.endsWith(".lean") || name === "lean-toolchain" ||
+    name === "lakefile.toml" || name === "lake-manifest.json" ||
+    name === "formalization.yaml" || name === "formalization.yml" ||
+    /^comparator(?:[.-][^/]*)?\.json$/u.test(name);
+}
+export async function snapshotLeanSources(root) {
+  const files = [];
+  let totalBytes = 0;
+  async function visit(dir, prefix = "") {
+    const entries = (await readdir(dir, { withFileTypes: true }))
+      .sort((left, right) => left.name.localeCompare(right.name, "en"));
+    for (const entry of entries) {
+      if (entry.isDirectory() && omittedTrees.has(entry.name)) continue;
+      const relative = prefix ? prefix + "/" + entry.name : entry.name;
+      const full = path.join(dir, entry.name);
+      // A symlinked source tree is neither in this snapshot nor safely excluded.
+      if (entry.isSymbolicLink()) {
+        if (proofSource(relative) || (await stat(full).catch(() => null))?.isDirectory())
+          throw new Error("local-source-symlink:" + relative);
+        continue;
+      }
+      if (entry.isDirectory()) {
+        await visit(full, relative);
+        continue;
+      }
+      if (!entry.isFile() || !proofSource(relative)) continue;
+      if (files.length >= maxSourceFiles) throw new Error("local-source-file-limit");
+      const info = await stat(full);
+      if (info.size > maxSourceBytes - totalBytes)
+        throw new Error("local-source-byte-limit");
+      const bytes = await readFile(full);
+      totalBytes += bytes.length;
+      files.push({ path: relative, bytes: bytes.length,
+        digest: createHash("sha256").update(bytes).digest("hex") });
+    }
+  }
+  await visit(root);
+  files.sort((left, right) => left.path.localeCompare(right.path, "en"));
+  const hash = createHash("sha256");
+  for (const file of files)
+    hash.update(file.path + "\0" + file.bytes + "\0" + file.digest + "\n");
+  return Object.freeze({ digest: "sha256:" + hash.digest("hex"), count: files.length,
+    bytes: totalBytes });
+}
+
 async function readPinned(root, relative) {
   try {
     const resolved = await realpath(path.join(root, relative));
@@ -79,7 +137,12 @@ export async function observeProofTarget(project, binding) {
     readPinned(root,"lake-manifest.json"),
   ]);
   const expected = [target.challenge.digest,null,target.manifestDigest];
+  let localSources;
+  let localSourceError;
+  try { localSources = await snapshotLeanSources(root); }
+  catch (error) { localSourceError = error instanceof Error ? error.message : "local-source-snapshot-error"; }
   const findings = [];
+  if (localSourceError !== undefined) findings.push({code:"local-source-snapshot-unavailable",reason:localSourceError});
   for (let i=0; i<files.length; i+=1) {
     if (files[i].code) findings.push({code:files[i].code,path:files[i].path});
     else if (expected[i] && files[i].digest !== expected[i]) findings.push({code:"digest-mismatch",path:files[i].path});
@@ -87,7 +150,8 @@ export async function observeProofTarget(project, binding) {
   if (files[1].toolchain !== undefined && files[1].toolchain !== target.toolchain)
     findings.push({code:"toolchain-mismatch",path:"lean-toolchain"});
   return Object.freeze({matched:findings.length===0,findings:Object.freeze(findings),
-    files:Object.freeze(files.map(file=>Object.freeze(file)))});
+    files:Object.freeze(files.map(file=>Object.freeze(file))),
+    ...(localSources === undefined ? {} : { localSources })});
 }
 /** A compiler axiom census is not the venue's independent challenge comparator. */
 export function judgeProofTarget(binding, before, after, inspection) {
@@ -98,6 +162,10 @@ export function judgeProofTarget(binding, before, after, inspection) {
     for (let i=0; i<before.files.length; i+=1)
       if (before.files[i]?.digest !== after.files[i]?.digest)
         findings.push({code:"source-changed",path:before.files[i].path});
+  if (!before?.localSources || !after?.localSources)
+    findings.push({code:"local-source-snapshot-missing"});
+  else if (before.localSources.digest !== after.localSources.digest)
+    findings.push({code:"local-source-tree-changed",before:before.localSources.digest,after:after.localSources.digest});
   if (!inspection || !Array.isArray(inspection.axioms))
     findings.push({code:"axiom-inspection-missing"});
   else {
@@ -108,5 +176,7 @@ export function judgeProofTarget(binding, before, after, inspection) {
     status:findings.length ? "refused" : "preflight-passed",
     platform:target.platform,targetId:target.targetId,taskDigest:target.taskDigest,
     challenge:target.challenge,toolchain:target.toolchain,manifestDigest:target.manifestDigest,
-    permittedAxioms:target.permittedAxioms,findings:Object.freeze(findings),unchecked});
+    permittedAxioms:target.permittedAxioms,
+    ...(before?.localSources ? {localSources:before.localSources} : {}),
+    findings:Object.freeze(findings),unchecked});
 }
