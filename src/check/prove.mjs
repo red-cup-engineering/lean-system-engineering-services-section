@@ -385,15 +385,34 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
               currentTask.challengeDigest !== task.challengeDigest)
             throw new Error("lean-prove: original Conjectures task changed during proof construction");
         }
+        // Preserve a successful candidate as a private, content-addressed
+        // project artifact. Never write it into a public/source-control path.
+        // Conjectures retains precisely the Main.lean declaration bytes;
+        // ordinary mathematics retains its complete proved module.
+        const candidateDigest = hash(selectedSource);
+        const privateFolder = path.join(root, ".lake", "proof-candidates");
+        await mkdir(privateFolder, {recursive:true});
+        const candidateRelative = ".lake/proof-candidates/" +
+          candidateDigest.slice("sha256:".length) +
+          (task === undefined ? ".lean" : ".Main.lean");
+        const privateFile = path.join(root, candidateRelative);
+        try {
+          await writeFile(privateFile, selectedSource, {flag:"wx",mode:0o600});
+        } catch (error) {
+          if (error?.code !== "EEXIST" ||
+              hash(await readFile(privateFile)) !== candidateDigest)
+            throw error;
+        }
         return Object.freeze({
           kind: "metroplat.lean.proof-search-result", id:plan.id,
           state:"candidate-compiled", project:root,
+          candidatePath:candidateRelative,
           file:task === undefined ? plan.file : plan.taskDirectory + "/Main.lean",
           declaration:plan.declaration, axioms:selectedAxioms,
           axiomReadout:selectedReadout.slice(-2500),
           ...(task === undefined ? {} : {task:taskIdentity(task),mainLean:selectedSource}),
           ...(selectedTargetVerdict === undefined ? {} : {proofTarget:selectedTargetVerdict}),
-          sourceDigest:hash(originalBytes),candidateDigest:hash(selectedSource),
+          sourceDigest:hash(originalBytes),candidateDigest,
           proofProgram:selectedProgram,
           ...(byProgram.has(program) ? {sourceProposals:byProgram.get(program)} : {}),
           proofTerm:"by\n  " + selectedProgram.split("\n").join("\n  "),
