@@ -215,6 +215,28 @@ function diagnostic(result) {
   return (texts.length ? texts.join("\n") : String(result?.stderr ?? result?.stdout ?? "")).slice(-2500);
 }
 
+/**
+ * Retain actual compiler feedback and source-derived proof attempts in the
+ * authorized project, not the shared Work journal. Future proof researchers
+ * can continue from exact failed goals instead of repeating the same blind
+ * tactic search. The report is private and references the source revision.
+ */
+async function retainProofAttempt(root, result) {
+  const folder = path.join(root, ".lake", "proof-runs");
+  await mkdir(folder, {recursive:true});
+  const relative = ".lake/proof-runs/" + result.id + ".json";
+  await writeFile(path.join(root,relative),
+    JSON.stringify({kind:"metroplat.lean.private-proof-attempt",
+      id:result.id,sourceDigest:result.sourceDigest,
+      candidateDigest:result.candidateDigest ?? null,
+      task:result.task ?? null,started:result.started,ended:result.ended,
+      hints:result.hints ?? [],attempts:result.attempts,
+      frontier:result.frontier ?? [],
+      candidatePath:result.candidatePath ?? null},null,2)+"\n",
+    {flag:"wx",mode:0o600});
+  return Object.freeze({...result,receiptPath:relative});
+}
+
 function taskIdentity(task) {
   return Object.freeze({
     taskId:task.taskId, taskMode:task.taskMode, sourceTheorem:task.sourceTheorem,
@@ -405,7 +427,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
               hash(await readFile(privateFile)) !== candidateDigest)
             throw new TypeError("lean-prove: content-addressed artifact path is not the proved file");
         }
-        return Object.freeze({
+        return retainProofAttempt(root, Object.freeze({
           kind: "metroplat.lean.proof-search-result", id:plan.id,
           state:"candidate-compiled", project:root,
           candidatePath:candidateRelative,
@@ -422,12 +444,12 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           attempts:Object.freeze(attempts),started,ended:new Date().toISOString(),
           venueAccepted:false,
           note:"The original theorem was compiled by Lean. Fixed suggestions are replayed before selection; external Comparator acceptance remains separate.",
-        });
+        }));
       }
       if (result?.state === "refused" || result?.state === "timed-out" ||
           targetVerdict?.status === "refused") break;
     }
-    return Object.freeze({
+    return retainProofAttempt(root, Object.freeze({
       kind:"metroplat.lean.proof-search-result", id:plan.id, state:"unresolved",
       project:root, file:task === undefined ? plan.file : plan.taskDirectory + "/Main.lean",
       declaration:plan.declaration,
@@ -439,7 +461,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         .map(a => Object.freeze({program:a.program,openGoals:a.openGoals}))),
       started, ended:new Date().toISOString(), venueAccepted:false,
       note:"Real compiler attempts did not close the theorem; unsolved Lean goals are the research frontier.",
-    });
+    }));
   } finally {
     await unlink(scratch).catch(e => {if(e?.code!=="ENOENT")throw e;});
     await rmdir(folder).catch(e => {if(!["ENOENT","ENOTEMPTY"].includes(e?.code))throw e;});
