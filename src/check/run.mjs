@@ -99,6 +99,29 @@ async function releaseNodeLock(id) {
     const owner = await lockOwner();
     if (owner?.id === id) await unlink(lockPath).catch((error) => { if (error?.code !== "ENOENT") throw error; });
 }
+/**
+ * Reuse the original single-node Lean lock for an independent, exact-pinned
+ * upstream venue verifier. The callback MUST terminate its own process group
+ * on budget expiration; this wrapper owns only the shared Work admission.
+ * It prevents concurrent internal Lake proof checks from racing a full
+ * publisher Comparator/kernel run on the same constrained worker.
+ */
+export async function withLeanNodeLock(id, project, work) {
+    if (activeRun !== null)
+        return Object.freeze({acquired:false,runningId:activeRun.id});
+    const plan = {id,project,unit:"lean-check-"+id+".scope"};
+    const lock = await acquireNodeLock(plan);
+    if (!lock.acquired)
+        return Object.freeze({acquired:false,runningId:lock.runningId});
+    activeRun = Object.freeze(plan);
+    try {
+        return Object.freeze({acquired:true,result:await work()});
+    } finally {
+        if (activeRun?.id === id) activeRun = null;
+        await releaseNodeLock(id);
+    }
+}
+
 async function terminateScope(unit, knownControlGroup) {
     await control(["kill", "--kill-whom=all", "--signal=KILL", unit]);
     await control(["stop", unit]);
