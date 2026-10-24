@@ -162,6 +162,19 @@ export function readPrintedAxioms(output, declaration) {
   return Object.freeze([...new Set(names)].sort());
 }
 
+/**
+ * A successful search tactic may tell us a smaller exact proof term. Only a
+ * second REAL Lean elaboration may promote that suggestion to returned source.
+ */
+export function suggestedExactProof(readout) {
+  const lines = String(readout ?? "").split(/\r?\n/u);
+  const candidates = lines.flatMap(line => {
+    const hit = /Try this:\s*((?:exact|simpa using|simp only)\s+[^\r\n]+)/u.exec(line);
+    return hit === null ? [] : [hit[1].trim()];
+  });
+  return candidates.at(-1) ?? null;
+}
+
 function diagnostic(result) {
   const texts = [...(result?.errors ?? []), ...(result?.compilerErrors ?? [])]
     .map(x => typeof x === "string" ? x : x.message ?? JSON.stringify(x)).filter(Boolean);
@@ -269,22 +282,62 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         programs.splice(index + 1, 0, ...additions);
       }
       if (compiled) {
+        let selectedProgram = program;
+        let selectedSource = candidate;
+        let selectedAxioms = axioms;
+        let selectedReadout = readout;
+        const suggestion = suggestedExactProof(readout);
+        // Canonicalize a search tactic (exact?) into the concrete proof that
+        // Lean actually suggested. Never trust an info message without replay.
+        if (suggestion && suggestion !== program && attempts.length < plan.maxAttempts) {
+          const simplified = replaceProofHole(original, suggestion);
+          const rendered = task === undefined ? simplified :
+            renderConjecturesCandidate(task, simplified).compilerSource;
+          await writeFile(scratch, rendered + "\n#print axioms " + plan.declaration + "\n",
+            {mode:0o600});
+          const replay = await check(planCheck);
+          const replayOutput = String(replay?.stdout ?? "") + "\n" + String(replay?.stderr ?? "");
+          const replayAxioms = replay?.state === "succeeded" ?
+            readPrintedAxioms(replayOutput, plan.declaration) : null;
+          const simplerValid = replay?.state === "succeeded" && replayAxioms !== null &&
+            !replayAxioms.includes("sorryAx") &&
+            (task === undefined || replayAxioms.every(a => task.allowedAxioms.includes(a)));
+          attempts.push(Object.freeze({
+            index:attempts.length,program:suggestion,
+            state:simplerValid ? "candidate-compiled" : (replay?.state ?? "failed"),
+            ...(replayAxioms === null ? {} : {axioms:replayAxioms}),
+            ...(simplerValid ? {} : {diagnostic:"Lean rejected the suggested fixed proof"}),
+          }));
+          if (simplerValid) {
+            selectedProgram = suggestion;
+            selectedSource = simplified;
+            selectedAxioms = replayAxioms;
+            selectedReadout = replayOutput;
+          }
+        }
         if (hash(await readFile(sourcePath)) !== hash(originalBytes))
-          throw new Error("lean-prove: theorem changed during successful search");
+          throw new Error("lean-prove: original theorem changed during proof construction");
+        if (task !== undefined) {
+          const currentTask = await readConjecturesTask(root, plan.taskDirectory, {taskRoot});
+          if (currentTask.manifestDigest !== task.manifestDigest ||
+              currentTask.challengeDigest !== task.challengeDigest)
+            throw new Error("lean-prove: original Conjectures task changed during proof construction");
+        }
         return Object.freeze({
           kind: "metroplat.lean.proof-search-result", id:plan.id,
           state:"candidate-compiled", project:root,
           file:task === undefined ? plan.file : plan.taskDirectory + "/Main.lean",
-          declaration:plan.declaration, axioms, axiomReadout:readout.slice(-2500),
-          ...(task === undefined ? {} : {task:taskIdentity(task),mainLean:candidate}),
+          declaration:plan.declaration, axioms:selectedAxioms,
+          axiomReadout:selectedReadout.slice(-2500),
+          ...(task === undefined ? {} : {task:taskIdentity(task),mainLean:selectedSource}),
           ...(targetVerdict === undefined ? {} : {proofTarget:targetVerdict}),
-          sourceDigest:hash(originalBytes), candidateDigest:hash(candidate),
-          proofProgram:program,
-          proofTerm:"by\n  " + program.split("\n").join("\n  "),
-          candidateSource:candidate, hints:Object.freeze(hints),
-          attempts:Object.freeze(attempts), started, ended:new Date().toISOString(),
+          sourceDigest:hash(originalBytes),candidateDigest:hash(selectedSource),
+          proofProgram:selectedProgram,
+          proofTerm:"by\n  " + selectedProgram.split("\n").join("\n  "),
+          candidateSource:selectedSource,hints:Object.freeze(hints),
+          attempts:Object.freeze(attempts),started,ended:new Date().toISOString(),
           venueAccepted:false,
-          note:"Lean compiled this exact candidate. Axiom audit, exact external Comparator and mathematical correspondence remain distinct.",
+          note:"The original theorem was compiled by Lean. Fixed suggestions are replayed before selection; external Comparator acceptance remains separate.",
         });
       }
       if (result?.state === "refused" || result?.state === "timed-out" ||
