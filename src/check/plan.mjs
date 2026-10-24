@@ -1,4 +1,5 @@
 import path from "node:path";
+import { validateProofTarget } from "./proof-target.mjs";
 
 export const defaultLeanCheckTimeoutMs = 300_000;
 export const maximumLeanCheckTimeoutMs = 1_800_000;
@@ -22,7 +23,7 @@ export function planLeanCheck(input) {
     const project = path.resolve(nonempty(input?.project, "project"));
     const mode = input?.mode ?? "build";
     if (!["build", "file", "declaration"].includes(mode)) throw new TypeError("lean-check: mode must be build, file, or declaration");
-    const allowed = new Set(["project", "id", "mode", "timeoutMs", ...(mode === "build" ? ["targets"] : mode === "file" ? ["file"] : ["module", "declaration"])]);
+    const allowed = new Set(["project", "id", "mode", "timeoutMs", ...(mode === "build" ? ["targets"] : mode === "file" ? ["file"] : ["module", "declaration", "proofTarget"])]);
     for (const key of Object.keys(input)) if (!allowed.has(key)) throw new TypeError(`lean-check: ${key} is not a ${mode} input`);
     const timeoutMs = input?.timeoutMs ?? defaultLeanCheckTimeoutMs;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > maximumLeanCheckTimeoutMs)
@@ -47,7 +48,8 @@ export function planLeanCheck(input) {
         const module = name(input?.module, "module");
         const declaration = name(input?.declaration, "declaration");
         const program = `import Lean\nimport ${module}\nopen Lean Elab Command\n#eval show CommandElabM Unit from do\n  let n := \`${declaration}\n  let env ← getEnv\n  let some ci := env.find? n | throwError "declaration not found"\n  let axs ← liftCoreM (collectAxioms n)\n  IO.println s!"#lean-declaration\t{n}"\n  IO.println s!"#lean-axioms\t{String.intercalate "," (axs.map toString).toList}"\n  IO.println s!"#lean-dependencies\t{String.intercalate "," (ci.getUsedConstantsAsSet.toList.map toString)}"\n`;
-        action = { module, declaration, program };
+        action = { module, declaration, program,
+            ...(input?.proofTarget === undefined ? {} : { proofTarget: validateProofTarget(input.proofTarget) }) };
     }
     return Object.freeze({ kind: "metroplat.lean.check-plan", id, project, mode,
         ...action, command: "lake", timeoutMs, unit: `lean-check-${id}.scope` });
