@@ -72,13 +72,22 @@ bounty registry or an assertion that the publisher approved the task:
 - `challenge: {path, digest}`: in-project relative POSIX `.lean` source path
   and SHA-256 of its exact bytes; `toolchain`: exact text of the pinned
   `lean-toolchain`; `manifestDigest`: SHA-256 of `lake-manifest.json`.
+- `sourceDigest`: SHA-256 content fingerprint of the producer-selected local Lean
+  source tree and proof configuration, obtained from the public
+  `./check/proof-target` export's `snapshotLeanSources(projectRoot)`.
+  Its deterministic digest covers in-project `.lean` files, pinned Lean/Lake
+  configuration, Comparator JSON, and formalization metadata; it is mandatory
+  for external proof preflight. The checker recomputes it on both sides of
+  execution and refuses a mismatched or changing source revision. This is a
+  bounded local-source fingerprint, **not** an immutable Git commit or proof
+  that externally imported Lean packages, caches, or generated code are fixed.
 - `permittedAxioms`: a caller-supplied list of permitted transitive kernel
   axiom names, independently populated from the particular venue's current rules.
   `sorryAx` is never permissible. This is intentionally **not** the
   Obsmetrologia-specific Axiom Law, which remains with Proof Work Orders.
 
 The input schema allows this option only on `mode: "declaration"` checks.
-Before a Lean run, the existing bounded worker refuses missing, changed or
+Before a Lean run, the existing bounded worker refuses missing, changed, unpinned or
 escaping challenge/toolchain/manifest files; after the run it checks the exact
 bytes again and compares Lean's actual `collectAxioms` report with the declared
 policy. A mismatch refuses success and withholds the admitted declaration
@@ -99,3 +108,11 @@ Original receivers: [Proof Science #2](https://github.com/lenticule-science/proo
 [Lean service qualification #14](https://github.com/red-cup-engineering/computer-code-engineering-services-section/issues/14),
 [Opportunity Work #35](https://github.com/561-group/561-group-opportunity-services-section/issues/35),
 and [Obsmetrologia CI incident #84](https://github.com/lenticule-science/obsmetrologia-science-services-section/issues/84).
+
+## Exact external acceptance remains downstream
+
+**Conjectures.io**, under its published [submission bundle contract](https://github.com/conjectures-io/conjectures-validator/blob/main/docs/SUBMISSION_BUNDLE.md), accepts a bounded two-entry ZIP (`submission.json`, `Main.lean`); the manifest binds a **task-bundle** digest, exact proof bytes, task ID, and the authenticated identity profile. Its official `python3 -m verifier bundle scan` and `bundle verify` stages, with the task's pinned environment and policy, are required before any authorized paid attempt. A normal declaration-mode Lean check is **not** that upstream verification. Original AI conversation records, eligibility and reward review are separate obligations in [published submission terms](https://github.com/conjectures-io/conjectures-validator/blob/main/docs/SUBMISSION_TERMS.md). Do not regenerate chat logs or package them into the two-entry ZIP.
+
+**Palomar**, under its [current submission standard](https://github.com/PalomarRegistry/PalomarPolicy/blob/main/CONTRIBUTING.md), requires a fully pinned public Git commit, formalization.yaml, Challenge/Solution and Comparator configuration. The actual Comparator statement match, replay by Lean and a separately implemented kernel, strict Challenge dependency policy, and independent review remain unverified by this local preflight. The existing Obsmetrologia Blueprint/Verso work and axiom law remain authoritative for subject mathematics; do not silently treat an external venue's axiom allowlist as equivalent to the internal law.
+
+The engineering handoff from proof-producing Science to the original Opportunity Work therefore preserves: *exact problem and task commitment → authoritative mathematical claim and source genealogy → source-pinned proof candidate → local compiler/axiom evidence → actual venue-specific independent verifier result → permitted submission/review → separately observed payout*. A `preflight-passed` result establishes only the bounded part of that chain.
