@@ -32,6 +32,8 @@ function appendProofEvidence(dataRoot, result, context) {
         attemptCount:result.attempts?.length ?? 0,
         taskId:result.task?.taskId ?? null,
         taskBundleDigest:result.task?.taskBundleDigest ?? null,
+        verifierReportDigest:result.verifierReportDigest ?? null,
+        verifiedLocally:result.verifiedLocally ?? false,
         venueAccepted:false,
         ended:result.ended ?? new Date().toISOString(),
     };
@@ -66,7 +68,7 @@ export function leanCheckOperations({ dataRoot }) {
         locus: "project", writes: [leanProofFeed],
         effects: { class: "external", replay: "coordinated", coordination: "coordination-required", deterministic: "unmeasured", totality: "partial" },
         summary: "Construct actual Lean proof candidates from one unresolved theorem and its Blueprint predecessor lemmas, using the bounded compiler.",
-        description: "Provide either (a) a pinned Lean project, exact qualified target declaration and one original by-sorry .lean file, with optional Blueprint predecessor lemmas and proofTarget, or (b) an existing Conjectures v2 taskDirectory inside the pinned Lean project holding its Challenge, header/footer, manifest and Comparator. Source-owned mathematical offices may supply up to sixteen project-local proofs/*.tactic proposalFiles with complete derivations; these run before fallback search tactics, and returned proofs retain their source proposal identities. The service builds candidate terms against the unchanged theorem, runs the existing bounded Lean worker, and for a Conjectures task emits the exact Main.lean declaration body within the trusted frame. Source theorem identity and permitted task axioms are preserved. Neither local compilation nor a receipt replaces the platform Comparator or proves prize acceptance.",
+        description: "Provide either (a) a pinned Lean project, exact qualified target declaration and one original by-sorry .lean file, with optional Blueprint predecessor lemmas and proofTarget, or (b) an existing Conjectures v2 taskDirectory inside the pinned Lean project holding its Challenge, header/footer, manifest and Comparator. Source-owned mathematical offices may supply up to sixteen project-local proofs/*.tactic proposalFiles with complete derivations; these run before fallback search tactics, and returned proofs retain their source proposal identities. The source-owned theorem route uses the existing bounded Lean worker. For a Conjectures task the service invokes the installed official Conjectures validator under its own exact task/build pins and production Comparator/kernel sandbox, consuming the generated Main.lean as a private candidate. Local verification is not live submission, paid acceptance or an award. Source theorem identity and permitted task axioms are preserved. Neither local compilation nor a receipt replaces the platform Comparator or proves prize acceptance.",
         run: async (input, _args, context) => {
             const id = randomUUID();
             const requestedAt = new Date().toISOString();
