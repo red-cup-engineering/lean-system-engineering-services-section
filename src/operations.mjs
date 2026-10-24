@@ -78,6 +78,7 @@ export function leanCheckOperations({ dataRoot }) {
                 const plan = planLeanProof({...(input ?? {}),id});
                 const result = await runLeanProofSearch(plan, {
                     taskRoot:process.env.CONJECTURES_TASKS_ROOT || undefined,
+                    validatorRoot:process.env.CONJECTURES_VALIDATOR_ROOT || undefined,
                 });
                 return appendProofEvidence(dataRoot,result,context);
             } catch (error) {
