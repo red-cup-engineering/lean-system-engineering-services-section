@@ -9,7 +9,7 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, realpath, readFile } from "node:fs/promises";
 
 const sha = bytes => "sha256:" + createHash("sha256").update(bytes).digest("hex");
 const maxOutputBytes = 4 * 1024 * 1024;
@@ -38,6 +38,7 @@ export async function verifyConjecturesCandidate({
     if (!info.isFile() || info.isSymbolicLink() || info.size > expectedSize)
       throw new TypeError("Conjectures trusted verifier/input file is missing or unsafe");
   }
+  const proofDigest = sha(await readFile(mainFile));
   if (!/^sha256:[a-f0-9]{64}$/u.test(task.taskBundleDigest) ||
       !/^sha256:[a-f0-9]{64}$/u.test(task.buildProvenanceDigest))
     throw new TypeError("Conjectures publisher task/build commitment is missing");
@@ -80,29 +81,44 @@ export async function verifyConjecturesCandidate({
   let report=null;
   try { report=JSON.parse(output) } catch { /* no claim from partial output */ }
   const checks=report?.checks ?? {};
+  // The verifier must have read the SAME candidate we will later retain.
+  // A compiler report from a different file or a mid-run file mutation is
+  // not economic proof evidence.
+  let sourceChanged=true;
+  try { sourceChanged=sha(await readFile(mainFile))!==proofDigest; }
+  catch { sourceChanged=true }
   const complete=report?.accepted===true && result.code===0 &&
     report.reason_code==="VERIFIED" &&
     report.task_id===task.taskId &&
+    report.task_mode===task.taskMode &&
+    report.source_theorem===task.sourceTheorem &&
+    report.repository_commit===task.publisherSourceRevision &&
     report.task_bundle_sha256===task.taskBundleDigest &&
+    report.submission_sha256===proofDigest &&
     checks.task_commitment_valid===true &&
     checks.same_statement===true &&
     checks.axioms_permitted===true &&
     checks.lean_kernel_passed===true &&
     checks.production_sandbox===true &&
     report.sandbox_mode==="landrun+seccomp" &&
-    !timeout && outBytes<=maxOutputBytes && errBytes<=maxOutputBytes;
-  const reason=report?.reason_code ?? (timeout?"TIMEOUT":
+    !sourceChanged && !timeout &&
+    outBytes<=maxOutputBytes && errBytes<=maxOutputBytes;
+  const identityMismatch=report?.accepted===true && !complete;
+  const reason=identityMismatch ? "VERIFIER_REPORT_IDENTITY_MISMATCH" :
+    report?.reason_code ?? (timeout?"TIMEOUT":
     result.error ? "VERIFIER_EXECUTION_UNAVAILABLE" :
       outBytes>maxOutputBytes ? "VERIFIER_OUTPUT_EXCEEDED" : "VERIFIER_REPORT_UNAVAILABLE");
   // CLI exit 2 is a configuration/host/pin failure, NOT a mathematical
   // rejection. Exit 1 represents an unsuccessful verification attempt.
   const status=complete ? "verified-locally" :
-    timeout || result.code===2 || result.error ? "blocked" : "rejected";
+    identityMismatch || sourceChanged || timeout || result.code===2 || result.error ?
+      "blocked" : "rejected";
   const reportText=report===null ? null : JSON.stringify(report);
   return Object.freeze({
     kind:"metroplat.lean.conjectures-local-verification",
     status,reasonCode:reason,started,ended:new Date().toISOString(),
     taskId:task.taskId,taskBundleDigest:task.taskBundleDigest,
+    proofDigest,
     reportDigest:reportText===null ? null : sha(Buffer.from(reportText,"utf8")),
     // Only the authorized caller sees the report; the shared Work journal
     // will receive the digest and status, never the complete solution.
