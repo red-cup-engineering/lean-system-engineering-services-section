@@ -28,6 +28,8 @@ function qualifiedHints(hints) {
 }
 export function planLeanProof(input) {
   const file = input?.file;
+  if (typeof input?.declaration !== "string" || !qualified.test(input.declaration))
+    throw new TypeError("lean-prove: target declaration must be an exact qualified Lean name");
   if (typeof input?.project !== "string" || !input.project.trim() ||
       typeof file !== "string" || !file.endsWith(".lean") || path.isAbsolute(file) ||
       file.startsWith("-") || file.includes("\\") ||
@@ -41,10 +43,11 @@ export function planLeanProof(input) {
        !/^[a-z]+:[a-z0-9-]+$/u.test(input.blueprintLabel)))
     throw new TypeError("lean-prove: blueprintLabel must be an exact source claim label");
   for (const key of Object.keys(input))
-    if (!["project", "file", "id", "maxAttempts", "timeoutMs", "blueprintLabel", "hints"].includes(key))
+    if (!["project", "file", "id", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints"].includes(key))
       throw new TypeError("lean-prove: unexpected field " + key);
   return Object.freeze({
     kind: "metroplat.lean.proof-search-plan", id, project: path.resolve(input.project), file,
+    declaration:input.declaration,
     maxAttempts: bounded(input.maxAttempts ?? 16, "maxAttempts", 1, 64),
     timeoutMs: bounded(input.timeoutMs ?? 60_000, "timeoutMs", 1000, 180_000),
     hints: Object.freeze(qualifiedHints(input.hints ?? [])),
@@ -57,10 +60,12 @@ export function planLeanProof(input) {
  * Lean declarations; filter against the same project's declaration catalog.
  * Never interpret the mathematical prose as a proof or a tactic.
  */
-export function proofHintsFromBlueprint(workspace, label) {
+export function proofHintsFromBlueprint(workspace, label, targetDeclaration) {
   const graph = workspace?.texWorkspaceRead?.blueprintClaimGraph;
   const node = graph?.nodes?.find(n => n.id === label);
   if (!node) throw new Error("lean-prove: missing original Blueprint claim " + label);
+  if (targetDeclaration !== undefined && !node.leanDeclarations.includes(targetDeclaration))
+    throw new Error("lean-prove: target declaration is not the Blueprint claim " + label);
   const known = new Set(workspace.declarationCatalog.entries.map(e => e.name));
   const byId = new Map(graph.nodes.map(n => [n.id, n]));
   const self = new Set(node.leanDeclarations);
@@ -71,19 +76,23 @@ export function proofHintsFromBlueprint(workspace, label) {
 
 /** Tactics and lemma applications. These are real proof attempts, not model scores. */
 export function proofPrograms(hints = []) {
-  const programs = [
-    "rfl", "assumption", "trivial", "decide", "simp", "simp_all",
-    "omega", "aesop", "exact?", "constructor <;> assumption",
-    "constructor <;> simp", "intro h\nexact h",
-    "simp_all\nall_goals omega", "simp\nall_goals aesop",
-  ];
   const names = qualifiedHints(hints);
-  for (const name of names)
-    programs.push("exact " + name, "simpa using " + name);
-  for (const name of names)
-    programs.push("apply " + name + " <;> assumption", "apply " + name + " <;> simp");
+  const programs = [];
+  // Earned Blueprint predecessor lemmas get compiler attention before generic
+  // tactics. The number of available candidate programs is bounded by the
+  // original work's explicit attempt budget.
+  for (const name of names) {
+    programs.push("exact " + name, "simpa using " + name,
+      "apply " + name + " <;> assumption",
+      "apply " + name + " <;> simp");
+  }
   if (names.length)
-    programs.push("simp [" + names.join(", ") + "]", "simp_all [" + names.join(", ") + "]");
+    programs.push("simp [" + names.join(", ") + "]",
+      "simp_all [" + names.join(", ") + "]");
+  programs.push("rfl", "assumption", "trivial", "simp", "simp_all",
+    "decide", "omega", "aesop", "exact?", "constructor <;> assumption",
+    "constructor <;> simp", "intro h\\nexact h",
+    "simp_all\\nall_goals omega", "simp\\nall_goals aesop");
   return Object.freeze([...new Set(programs)]);
 }
 
@@ -134,7 +143,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   if ([...original.matchAll(hole)].length !== 1)
     throw new TypeError("lean-prove: original source lacks unique proof hole");
   const fromBlueprint = plan.blueprintLabel === undefined ? [] :
-    proofHintsFromBlueprint(workspaceRead(root), plan.blueprintLabel);
+    proofHintsFromBlueprint(workspaceRead(root), plan.blueprintLabel, plan.declaration);
   const hints = [...new Set([...fromBlueprint, ...plan.hints])].slice(0, 32);
   // Base strategies are read from the actual library hints. When a tactic
   // exposes genuine unsolved goals, synthesize its *continuation* next.
@@ -152,14 +161,17 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         throw new Error("lean-prove: source changed during search");
       const program = programs[index];
       const candidate = replaceProofHole(original, program);
-      await writeFile(scratch, candidate, { mode: 0o600 });
+      // The admitted source remains exactly the candidate: only the private
+      // scratch adds Lean’s native transitive axiom query for the target name.
+      await writeFile(scratch, candidate + "\n#print axioms " + plan.declaration + "\n", {mode:0o600});
       const planCheck = planLeanCheck({
         id: ("proof-" + plan.id + "-" + index).slice(0, 80),
         project: root, mode: "file", file: scratchRelative,
         timeoutMs: plan.timeoutMs,
       });
       const result = await check(planCheck);
-      const compiled = result?.state === "succeeded";
+      const compiled = result?.state === "succeeded" &&
+        !String(result?.stdout ?? "").includes("sorryAx");
       const message = compiled ? "" : diagnostic(result);
       const goals = remainingLeanGoals(message);
       attempts.push(Object.freeze({
@@ -181,6 +193,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         return Object.freeze({
           kind: "metroplat.lean.proof-search-result", id:plan.id,
           state:"candidate-compiled", project:root, file:plan.file,
+          declaration:plan.declaration, axiomReadout:String(result.stdout ?? "").slice(-2500),
           sourceDigest:hash(originalBytes), candidateDigest:hash(candidate),
           proofProgram:program, candidateSource:candidate, hints:Object.freeze(hints),
           attempts:Object.freeze(attempts), started, ended:new Date().toISOString(),
@@ -192,7 +205,8 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
     }
     return Object.freeze({
       kind:"metroplat.lean.proof-search-result", id:plan.id, state:"unresolved",
-      project:root, file:plan.file, sourceDigest:hash(originalBytes),
+      project:root, file:plan.file, declaration:plan.declaration,
+      sourceDigest:hash(originalBytes),
       hints:Object.freeze(hints), attempts:Object.freeze(attempts),
       frontier:Object.freeze(attempts.filter(a => a.openGoals?.length)
         .sort((a,b) => a.openGoals.length - b.openGoals.length).slice(0, 3)
