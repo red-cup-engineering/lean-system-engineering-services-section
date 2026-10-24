@@ -326,6 +326,8 @@ function taskIdentity(task) {
     taskId:task.taskId, taskMode:task.taskMode, sourceTheorem:task.sourceTheorem,
     challengeDigest:task.challengeDigest, manifestDigest:task.manifestDigest,
     taskBundleDigest:task.taskBundleDigest,
+    buildProvenanceDigest:task.buildProvenanceDigest,
+    requiredToolchain:task.requiredToolchain,
     rewardTargetId:task.rewardTargetId,
     publisherIndexState:task.publisherIndexState,
     publisherSourceRevision:task.publisherSourceRevision,
