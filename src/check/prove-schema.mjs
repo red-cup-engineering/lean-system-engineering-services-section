@@ -4,9 +4,9 @@ const text = {type:"string",minLength:1};
 const qualified = {type:"string",pattern:"^[A-Za-z_][A-Za-z0-9_']*(?:\\.[A-Za-z_][A-Za-z0-9_']*)*$"};
 export const leanProofSearchRequestSchema = {
   $id:"lean/proof-search-request",title:"LeanProofSearchRequest",
-  type:"object",additionalProperties:false,required:["project","file"],
+  type:"object",additionalProperties:false,required:["project","file","declaration"],
   properties:{
-    project:text,file:{type:"string",pattern:"\\.lean$"},
+    project:text,file:{type:"string",pattern:"\\.lean$"},declaration:qualified,
     blueprintLabel:{type:"string",pattern:"^[a-z]+:[a-z0-9-]+$"},
     hints:{type:"array",maxItems:32,items:qualified},
     maxAttempts:{type:"integer",minimum:1,maximum:64},
@@ -19,7 +19,8 @@ export const leanProofSearchResultSchema = {
   properties:{
     kind:{const:"metroplat.lean.proof-search-result"},
     id:text,state:{enum:["candidate-compiled","unresolved","failed"]},
-    file:text,project:text,sourceDigest:text,candidateDigest:text,
+    file:text,project:text,declaration:qualified,sourceDigest:text,candidateDigest:text,
+    axiomReadout:{type:"string"},
     candidateSource:{type:"string"},proofProgram:{type:"string"},
     hints:{type:"array",items:qualified},
     attempts:{type:"array",items:{type:"object",required:["index","program","state"],
