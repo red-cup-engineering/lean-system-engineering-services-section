@@ -246,7 +246,11 @@ async function retainProofAttempt(root, result) {
       hints:result.hints ?? [],attempts:result.attempts,
       resumedFrom:result.resumedFrom ?? null,
       frontier:result.frontier ?? [],
-      candidatePath:result.candidatePath ?? null},null,2)+"\n",
+      candidatePath:result.candidatePath ?? null,
+      verifier:result.verifier ?? null,
+      verifiedLocally:result.verifiedLocally ?? false,
+      verifierReportDigest:result.verifierReportDigest ?? null,
+      verifierReportPath:result.verifierReportPath ?? null},null,2)+"\n",
     {flag:"wx",mode:0o600});
   return Object.freeze({...result,receiptPath:relative});
 }
