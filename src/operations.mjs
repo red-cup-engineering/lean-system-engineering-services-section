@@ -3,14 +3,17 @@ import { put } from "@red-cup-engineering/semiotic-eavt-services-section/store";
 import { operation } from "@red-cup-engineering/computer-system-engine/rpc/operation";
 import { planLeanCheck } from "./check/plan.mjs";
 import { runLeanCheck } from "./check/run.mjs";
+import { planLeanProof, runLeanProofSearch } from "./check/prove.mjs";
+import { leanProofSearchRequestContract, leanProofSearchResultContract } from "./check/prove-schema.mjs";
 import { leanCheckRequestContract, leanCheckResultContract } from "./check/schema.mjs";
 
 export const leanCheckFeed = "lean-checks";
+export const leanProofFeed = "lean-proofs";
 
-function append(dataRoot, value, context) {
+function append(dataRoot, value, context, feed = leanCheckFeed) {
     const record = JSON.parse(JSON.stringify(value));
     const at = record.ended ?? record.requestedAt;
-    put(dataRoot, leanCheckFeed, { ...record, at });
+    put(dataRoot, feed, { ...record, at });
     return record;
 }
 
@@ -33,6 +36,31 @@ export function leanCheckOperations({ dataRoot }) {
                 const result = { kind: "metroplat.lean.check-result", id: plan.id, state: "failed", project: plan.project, targets: plan.targets, ended: new Date().toISOString(), errors: [{ message: error instanceof Error ? error.message : String(error) }] };
                 append(dataRoot, result, context);
                 return result;
+            }
+        },
+    }), operation({
+        verb: "lean-prove", inputFormat: "json", outputFormat: "json",
+        domain: leanProofSearchRequestContract, codomain: leanProofSearchResultContract,
+        locus: "project", writes: [leanProofFeed],
+        effects: { class: "external", replay: "coordinated", coordination: "coordination-required", deterministic: "unmeasured", totality: "partial" },
+        summary: "Construct actual Lean proof candidates from one unresolved theorem and its Blueprint predecessor lemmas, using the bounded compiler.",
+        description: "Provide a project and one .lean file with exactly one by-sorry hole. Optionally name an original Blueprint claim and qualified Lean lemma hints. The service compiles generated proof programs against the unchanged theorem using the installed lean-check executor, returns the first compiled source or the real failed compiler diagnostics. Never declares independent Comparator acceptance, imported axiom validity or a paid bounty.",
+        run: async (input, _args, context) => {
+            const id = randomUUID();
+            const requestedAt = new Date().toISOString();
+            append(dataRoot, {kind:"metroplat.lean.proof-search-request",id,state:"requested",
+                requestedAt,request:input,requestedBy:context?.invocation?.subject ?? null},context,leanProofFeed);
+            try {
+                const plan = planLeanProof({...(input ?? {}),id});
+                const result = await runLeanProofSearch(plan);
+                return append(dataRoot,result,context,leanProofFeed);
+            } catch (error) {
+                return append(dataRoot,{
+                    kind:"metroplat.lean.proof-search-result",id,state:"failed",
+                    sourceDigest:"unavailable",attempts:[],venueAccepted:false,
+                    started:requestedAt,ended:new Date().toISOString(),
+                    note:error instanceof Error ? error.message : String(error),
+                },context,leanProofFeed);
             }
         },
     })]);
