@@ -88,7 +88,8 @@ export async function verifyConjecturesCandidate({
   try { sourceChanged=sha(await readFile(mainFile))!==proofDigest; }
   catch { sourceChanged=true }
   const complete=report?.accepted===true && result.code===0 &&
-    report.reason_code==="VERIFIED" &&
+    report.reason_code==="VERIFIED" && report.stage==="COMPLETED" &&
+    checks.production_task===true &&
     report.task_id===task.taskId &&
     report.task_mode===task.taskMode &&
     report.source_theorem===task.sourceTheorem &&
