@@ -250,27 +250,43 @@ async function retainProofAttempt(root, result) {
  */
 async function readPreviousProofAttempt(root, runId, sourceDigest, task) {
   if (runId === undefined) return null;
-  const filename = path.join(root, ".lake", "proof-runs", runId + ".json");
-  const info = await lstat(filename);
-  if (!info.isFile() || info.isSymbolicLink() || info.size > 2 * 1024 * 1024)
-    throw new TypeError("lean-prove: saved proof history must be a private bounded file");
-  let prior;
-  try { prior = JSON.parse(await readFile(filename, "utf8")); }
-  catch { throw new TypeError("lean-prove: unreadable prior compiler history"); }
-  if (prior.kind !== "metroplat.lean.private-proof-attempt" ||
-      prior.id !== runId || prior.sourceDigest !== sourceDigest ||
-      !Array.isArray(prior.attempts) ||
-      prior.attempts.some(a => typeof a.program !== "string" || typeof a.state !== "string") ||
-      (task === undefined ? prior.task !== null :
-        prior.task?.taskId !== task.taskId ||
-        prior.task?.challengeDigest !== task.challengeDigest ||
-        prior.task?.manifestDigest !== task.manifestDigest))
-    throw new TypeError("lean-prove: prior proof history does not belong to this exact theorem/task");
+  const visited = new Set();
+  const attempted = new Set();
+  let current = runId;
+  let initialFrontier = [];
+  // Follow a bounded private Work lineage: a third shift must remember what
+  // the FIRST shift tried, not merely its immediately preceding predecessor.
+  for (let depth = 0; current !== null; depth++) {
+    if (depth >= 32 || visited.has(current) ||
+        typeof current !== "string" ||
+        !/^[A-Za-z0-9][A-Za-z0-9-]{0,60}$/u.test(current))
+      throw new TypeError("lean-prove: invalid or cyclic private proof Work history");
+    visited.add(current);
+    const filename = path.join(root, ".lake", "proof-runs", current + ".json");
+    const info = await lstat(filename);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 2 * 1024 * 1024)
+      throw new TypeError("lean-prove: saved compiler history must be a bounded regular file");
+    let prior;
+    try { prior = JSON.parse(await readFile(filename, "utf8")); }
+    catch { throw new TypeError("lean-prove: unreadable prior compiler history"); }
+    if (prior.kind !== "metroplat.lean.private-proof-attempt" ||
+        prior.id !== current || prior.sourceDigest !== sourceDigest ||
+        !Array.isArray(prior.attempts) ||
+        prior.attempts.some(a => typeof a.program !== "string" ||
+           typeof a.state !== "string" || a.program.length > 131072) ||
+        (task === undefined ? prior.task !== null :
+          prior.task?.taskId !== task.taskId ||
+          prior.task?.challengeDigest !== task.challengeDigest ||
+          prior.task?.manifestDigest !== task.manifestDigest))
+      throw new TypeError("lean-prove: prior proof Work belongs to a different theorem/task");
+    if (depth === 0) initialFrontier = Array.isArray(prior.frontier) ? prior.frontier : [];
+    for (const attempt of prior.attempts)
+      if (attempt.state !== "candidate-compiled") attempted.add(attempt.program);
+    current = prior.resumedFrom ?? null;
+  }
   return Object.freeze({
-    id:runId,
-    attempted:Object.freeze(prior.attempts.filter(a => a.state !== "candidate-compiled")
-      .map(a => a.program)),
-    frontier:Object.freeze(Array.isArray(prior.frontier) ? prior.frontier : []),
+    id:runId, priorRuns:visited.size,
+    attempted:Object.freeze([...attempted]), frontier:Object.freeze(initialFrontier),
   });
 }
 
