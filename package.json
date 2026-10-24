@@ -91,7 +91,10 @@
     "./golden-vector/judge": "./src/golden-vector/judge.mjs",
     "./golden-vector/specification": "./src/golden-vector/specification.mjs",
     "./golden-vector/suites": "./src/golden-vector/suites.mjs",
-    "./conformance-gate": "./src/conformance-gate.mjs"
+    "./conformance-gate": "./src/conformance-gate.mjs",
+    "./check/proof-target": {
+      "import": "./src/check/proof-target.mjs"
+    }
   },
   "files": [
     "src",
