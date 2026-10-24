@@ -5,6 +5,7 @@ const text = {type:"string",minLength:1};
 const qualified = {type:"string",pattern:"^[A-Za-z_][A-Za-z0-9_']*(?:\\.[A-Za-z_][A-Za-z0-9_']*)*$"};
 const commonProofProperties = {
   project:text,
+  resumeFrom:{type:"string",pattern:"^[A-Za-z0-9][A-Za-z0-9-]{0,60}$"},
   hints:{type:"array",maxItems:32,items:qualified},
   proposalFiles:{type:"array",maxItems:16,uniqueItems:true,items:{type:"string",pattern:"^proofs/.+\\.(?:tactic|leanproof)$"}},
   maxAttempts:{type:"integer",minimum:1,maximum:64},
@@ -33,7 +34,7 @@ export const leanProofSearchResultSchema = {
   properties:{
     kind:{const:"metroplat.lean.proof-search-result"},
     id:text,state:{enum:["candidate-compiled","unresolved","failed"]},
-    file:text,project:text,declaration:qualified,sourceDigest:text,candidateDigest:text,candidatePath:text,receiptPath:text,
+    file:text,project:text,declaration:qualified,sourceDigest:text,candidateDigest:text,candidatePath:text,receiptPath:text,resumedFrom:text,
     axiomReadout:{type:"string"},mainLean:{type:"string"},
     sourceProposals:{type:"array",items:{type:"object",required:["path","digest"],
       properties:{path:text,digest:text}}},
