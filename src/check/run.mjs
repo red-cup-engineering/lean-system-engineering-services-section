@@ -5,6 +5,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { readLeanDeclarationInspection, sourcePathForModule } from "./plan.mjs";
 import { leanCheckSucceeded } from "./admission.mjs";
+import { observeProofTarget, judgeProofTarget } from "./proof-target.mjs";
 import { fileURLToPath } from "node:url";
 
 import { parseLeanBuildOutput } from "../codec/build-oracle.mjs";
@@ -129,6 +130,16 @@ export async function runLeanCheck(plan, options = {}) {
     let temporary;
     try {
         await assertLakeProject(plan.project);
+        // The caller-supplied publisher claim is never treated as a verification
+        // authority. Refuse a source-pin mismatch before spending Lean compute.
+        const targetBefore = plan.proofTarget === undefined ? undefined :
+            await observeProofTarget(plan.project, plan.proofTarget);
+        if (targetBefore !== undefined && !targetBefore.matched) {
+            return Object.freeze({ kind: "metroplat.lean.check-result", id: plan.id,
+                state: "refused", project: plan.project, mode: plan.mode,
+                proofTarget: judgeProofTarget(plan.proofTarget, targetBefore, targetBefore, undefined),
+                started, ended: new Date().toISOString() });
+        }
         let args = plan.args;
         let command = options.lakeWrapper ?? lakeWrapper;
         let source;
@@ -189,21 +200,37 @@ export async function runLeanCheck(plan, options = {}) {
             } catch { sourceChanged = true; }
         }
         const outputTruncated = settled.stdout.truncated || settled.stderr.truncated;
-        const succeeded = leanCheckSucceeded({
+        const compilerSucceeded = leanCheckSucceeded({
             timedOut, exitCode: settled.code, signal: settled.signal,
             spawnError: settled.error, compilerErrors: parsed.errors,
             outputTruncated, scopeClean: cleanup.clean, sourceChanged,
         });
-        // Never surface axioms/dependencies from a run that fails final admission.
+        // A clean compiler exit is necessary but cannot certify an external
+        // challenge. Compare the exact pinned inputs again and apply the caller's
+        // venue-specific axiom policy to the compiler's transitive census.
         let inspection;
-        if (plan.mode === "declaration" && succeeded)
-            inspection = readLeanDeclarationInspection(settled.stdout.text, plan.declaration);
+        let inspectionError;
+        if (plan.mode === "declaration" && compilerSucceeded) {
+            try { inspection = readLeanDeclarationInspection(settled.stdout.text, plan.declaration); }
+            catch (error) {
+                if (plan.proofTarget === undefined) throw error;
+                inspectionError = error instanceof Error ? error.message : String(error);
+            }
+        }
+        const targetAfter = plan.proofTarget === undefined ? undefined :
+            await observeProofTarget(plan.project, plan.proofTarget);
+        const proofTarget = targetAfter === undefined ? undefined :
+            judgeProofTarget(plan.proofTarget, targetBefore, targetAfter, inspection);
+        const succeeded = compilerSucceeded && (proofTarget === undefined || proofTarget.status === "preflight-passed");
         return Object.freeze({ kind: "metroplat.lean.check-result", id: plan.id,
             state: timedOut ? "timed-out" : succeeded ? "succeeded" : "failed",
             project: plan.project, mode: plan.mode ?? "build", ...(plan.targets === undefined ? {} : { targets: plan.targets }),
             ...(source === undefined ? {} : { source, sourceChanged }),
             ...(plan.program === undefined ? {} : { program: plan.program, module: plan.module, declaration: plan.declaration }),
-            ...(inspection === undefined ? {} : { inspection }), unit: plan.unit, started, ended: new Date().toISOString(), timeoutMs: plan.timeoutMs,
+            ...(inspection === undefined || !succeeded ? {} : { inspection }),
+            ...(proofTarget === undefined ? {} : { proofTarget }),
+            ...(inspectionError === undefined ? {} : { inspectionError }),
+            unit: plan.unit, started, ended: new Date().toISOString(), timeoutMs: plan.timeoutMs,
             exitCode: settled.code, signal: settled.signal, stdout: settled.stdout.text, stderr: settled.stderr.text,
             outputTruncated, ...parsed, cleanup });
     } finally {
