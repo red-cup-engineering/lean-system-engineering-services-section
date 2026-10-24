@@ -9,7 +9,7 @@ import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { mkdir, readFile, realpath, lstat, unlink, writeFile, rmdir } from "node:fs/promises";
 import { planLeanCheck } from "./plan.mjs";
-import { runLeanCheck } from "./run.mjs";
+import { runLeanCheck, withLeanNodeLock } from "./run.mjs";
 import { validateProofTarget, observeProofTarget, judgeProofTarget } from "./proof-target.mjs";
 import { readLeanWorkspaceCore } from "../workspace/service.mjs";
 import { readConjecturesTask, renderConjecturesCandidate } from "./conjectures-task.mjs";
@@ -482,8 +482,22 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   const root = await realpath(plan.project);
   const task = plan.taskDirectory === undefined ? undefined :
     await readConjecturesTask(root, plan.taskDirectory, {taskRoot});
-  if (task !== undefined)
-    return runOfficialConjecturesSearch(plan,root,task,validatorRoot,taskRoot);
+  if (task !== undefined) {
+    const admitted=await withLeanNodeLock(plan.id,root,
+      ()=>runOfficialConjecturesSearch(plan,root,task,validatorRoot,taskRoot));
+    if (admitted.acquired) return admitted.result;
+    return retainProofAttempt(root,Object.freeze({
+      kind:"metroplat.lean.proof-search-result",id:plan.id,state:"blocked",
+      project:root,file:plan.taskDirectory+"/Main.lean",
+      declaration:task.targetDeclaration,task:taskIdentity(task),
+      sourceDigest:task.challengeDigest,attempts:Object.freeze([]),
+      blockerCode:"lean-worker-busy",
+      baselineDiagnostic:"Another bounded Lean/Comparator job currently owns the original host: "+
+        String(admitted.runningId ?? "unknown"),
+      started:new Date().toISOString(),ended:new Date().toISOString(),
+      venueAccepted:false,
+    }));
+  }
   const sourcePath = task === undefined ?
     await realpath(path.join(root, plan.file)) : task.challengePath;
   // A normal theorem belongs to the selected Lean project. A Conjectures
