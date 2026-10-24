@@ -1,12 +1,12 @@
 {
-  "name": "@red-cup-engineering/lean-system-services-section",
+  "name": "@red-cup-engineering/lean-system-engineering-services-section",
   "version": "0.2.2",
   "type": "module",
   "private": false,
   "description": "Lean/Blueprint/Verso proofing-project domain logic: toolchain/Lakefile/module codecs, import-graph/theorem-spine/capability-surface readers, Blueprint claim-graph linting, Verso exposition welding, and a live Lean-workspace filesystem reader.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/red-cup-engineering/lean-system-services-section.git"
+    "url": "git+https://github.com/red-cup-engineering/lean-system-engineering-services-section.git"
   },
   "license": "MIT",
   "engines": {
