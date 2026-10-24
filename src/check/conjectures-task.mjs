@@ -133,6 +133,12 @@ export async function readConjecturesTask(project, taskDirectory, {taskRoot} = {
       admitted.dependency_identity_sha256 !== manifest.dependency_identity_sha256 ||
       admitted.reward_target_id !== published.reward_target_id)
     throw new TypeError("lean-prove: task version differs from the published active task commitment");
+  const admission = admitted.admissions?.filter(entry =>
+    entry.repository_commit === allowlist.repository_commit);
+  if (!Array.isArray(admission) || admission.length !== 1 ||
+      !SHA256.test(admission[0].build_provenance_sha256 ?? "") ||
+      admission[0].environment_identity_sha256 !== manifest.environment_identity_sha256)
+    throw new TypeError("lean-prove: published build-provenance for this exact source revision is missing");
   return Object.freeze({
     kind:"metroplat.lean.conjectures-task", taskId:manifest.task_id,
     taskMode:manifest.task_mode, sourceTheorem:manifest.source_theorem,
@@ -140,6 +146,9 @@ export async function readConjecturesTask(project, taskDirectory, {taskRoot} = {
     challengeDigest:sha(members["Challenge.lean"]), manifestDigest:sha(rawManifest),
     taskBundleDigest:published.task_bundle_sha256,
     rewardTargetId:published.reward_target_id,
+    buildProvenanceDigest:admission[0].build_provenance_sha256,
+    requiredToolchain:version.environment?.lean_toolchain,
+    requiredMathlibRevision:version.environment?.mathlib_commit,
     publisherSourceRevision:allowlist.repository_commit,
     publisherAuditDate:allowlist.audit_date_utc,
     // This certifies only the local task-index snapshot, NOT live eligibility,
