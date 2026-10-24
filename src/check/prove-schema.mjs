@@ -1,4 +1,5 @@
 import { schemaFrom } from "@red-cup-engineering/json-schema-services-section/contracts";
+import { proofTargetSchema, leanCheckResultSchema } from "./schema.mjs";
 
 const text = {type:"string",minLength:1};
 const qualified = {type:"string",pattern:"^[A-Za-z_][A-Za-z0-9_']*(?:\\.[A-Za-z_][A-Za-z0-9_']*)*$"};
@@ -7,6 +8,7 @@ export const leanProofSearchRequestSchema = {
   type:"object",additionalProperties:false,required:["project","file","declaration"],
   properties:{
     project:text,file:{type:"string",pattern:"\\.lean$"},declaration:qualified,
+    proofTarget:proofTargetSchema,
     blueprintLabel:{type:"string",pattern:"^[a-z]+:[a-z0-9-]+$"},
     hints:{type:"array",maxItems:32,items:qualified},
     maxAttempts:{type:"integer",minimum:1,maximum:64},
@@ -21,6 +23,8 @@ export const leanProofSearchResultSchema = {
     id:text,state:{enum:["candidate-compiled","unresolved","failed"]},
     file:text,project:text,declaration:qualified,sourceDigest:text,candidateDigest:text,
     axiomReadout:{type:"string"},
+    axioms:{type:"array",items:qualified},
+    proofTarget:leanCheckResultSchema.properties.proofTarget,
     candidateSource:{type:"string"},proofProgram:{type:"string"},
     hints:{type:"array",items:qualified},
     attempts:{type:"array",items:{type:"object",required:["index","program","state"],
