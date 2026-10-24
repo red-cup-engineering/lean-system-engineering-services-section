@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, symlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { validateProofTarget, observeProofTarget, judgeProofTarget } from "../src/check/proof-target.mjs";
+import { validateProofTarget, observeProofTarget, judgeProofTarget, snapshotLeanSources } from "../src/check/proof-target.mjs";
 import { planLeanCheck } from "../src/check/plan.mjs";
 
 const hash = text => "sha256:" + createHash("sha256").update(text).digest("hex");
@@ -86,4 +86,45 @@ test("sorry, disallowed axiom and absent kernel inspection always refuse", async
     const result=judgeProofTarget(target(),observation,observation,inspection);
     assert.equal(result.status,"refused");
   }
+}));
+
+test("a changed imported Lean dependency invalidates external proof preflight", async () => workspace(async root => {
+  await writeFile(path.join(root,"Helper.lean"),"theorem supporting : True := by trivial\n");
+  const before=await observeProofTarget(root,target());
+  assert.equal(before.matched,true);
+  await writeFile(path.join(root,"Helper.lean"),"axiom supporting : False\n");
+  const after=await observeProofTarget(root,target());
+  assert.equal(after.matched,true); // The three original pins did not change.
+  const result=judgeProofTarget(target(),before,after,{axioms:[]});
+  assert.equal(result.status,"refused");
+  assert.ok(result.findings.some(f=>f.code==="local-source-tree-changed"));
+  assert.notEqual(before.localSources.digest,after.localSources.digest);
+}));
+test("added Lean modules and comparator configuration cannot escape source snapshot", async () => workspace(async root => {
+  const before=await observeProofTarget(root,target());
+  await writeFile(path.join(root,"New.lean"),"axiom injection : False\n");
+  await writeFile(path.join(root,"comparator.json"),'{"enable_nanoda":false}\n');
+  const after=await observeProofTarget(root,target());
+  assert.equal(judgeProofTarget(target(),before,after,{axioms:[]}).status,"refused");
+  assert.equal(after.localSources.count,before.localSources.count+2);
+}));
+test("local source scan is location-independent and deterministic", async () => workspace(async root => {
+  const snapshot=await snapshotLeanSources(root);
+  const snapshotAgain=await snapshotLeanSources(root);
+  assert.deepEqual(snapshot,snapshotAgain);
+  await writeFile(path.join(root,"Notes.txt"),"not an admitted Lean source\n");
+  assert.equal((await snapshotLeanSources(root)).digest,snapshot.digest);
+  await writeFile(path.join(root,"Solution.lean"),"theorem witness : True := by trivial\n");
+  assert.notEqual((await snapshotLeanSources(root)).digest,snapshot.digest);
+}));
+test("symlinked local Lean modules make proof source snapshot fail closed", async () => workspace(async root => {
+  const external=await mkdtemp(path.join(tmpdir(),"lean-external-"));
+  try {
+    await writeFile(path.join(external,"Foreign.lean"),"axiom forged : False\n");
+    await symlink(path.join(external,"Foreign.lean"),path.join(root,"Alien.lean"));
+    const observation=await observeProofTarget(root,target());
+    assert.equal(observation.matched,false);
+    assert.ok(observation.findings.some(f=>f.code==="local-source-snapshot-unavailable"));
+    assert.equal(judgeProofTarget(target(),observation,observation,{axioms:[]}).status,"refused");
+  } finally { await rm(external,{recursive:true,force:true}); }
 }));
