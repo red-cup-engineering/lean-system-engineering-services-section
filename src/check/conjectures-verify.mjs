@@ -111,7 +111,9 @@ export async function verifyConjecturesCandidate({
   // CLI exit 2 is a configuration/host/pin failure, NOT a mathematical
   // rejection. Exit 1 represents an unsuccessful verification attempt.
   const status=complete ? "verified-locally" :
-    identityMismatch || sourceChanged || timeout || result.code===2 || result.error ?
+    identityMismatch || sourceChanged || report===null ||
+    outBytes>maxOutputBytes || errBytes>maxOutputBytes ||
+    timeout || result.code===2 || result.error ?
       "blocked" : "rejected";
   const reportText=report===null ? null : JSON.stringify(report);
   return Object.freeze({
