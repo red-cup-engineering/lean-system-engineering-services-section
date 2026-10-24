@@ -7,12 +7,12 @@ const common = { project: text, timeoutMs: { type: "integer", minimum: 1, maximu
 const shaDigest = { type: "string", pattern: "^sha256:[a-f0-9]{64}$" };
 const proofTarget = {
     type: "object", additionalProperties: false,
-    required: ["platform", "targetId", "taskDigest", "challenge", "toolchain", "manifestDigest", "permittedAxioms"],
+    required: ["platform", "targetId", "taskDigest", "challenge", "toolchain", "manifestDigest", "sourceDigest", "permittedAxioms"],
     properties: {
         platform: { type: "string", pattern: "^https://" }, targetId: text, taskDigest: shaDigest,
         challenge: { type: "object", required: ["path", "digest"], additionalProperties: false,
             properties: { path: text, digest: shaDigest } },
-        toolchain: text, manifestDigest: shaDigest,
+        toolchain: text, manifestDigest: shaDigest, sourceDigest: shaDigest,
         permittedAxioms: { type: "array", uniqueItems: true, items: text },
     },
 };
