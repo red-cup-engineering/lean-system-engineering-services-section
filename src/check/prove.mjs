@@ -91,8 +91,8 @@ export function proofPrograms(hints = []) {
       "simp_all [" + names.join(", ") + "]");
   programs.push("rfl", "assumption", "trivial", "simp", "simp_all",
     "decide", "omega", "aesop", "exact?", "constructor <;> assumption",
-    "constructor <;> simp", "intro h\\nexact h",
-    "simp_all\\nall_goals omega", "simp\\nall_goals aesop");
+    "constructor <;> simp", "intro h\nexact h",
+    "simp_all\nall_goals omega", "simp\nall_goals aesop");
   return Object.freeze([...new Set(programs)]);
 }
 
@@ -171,7 +171,8 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
       });
       const result = await check(planCheck);
       const compiled = result?.state === "succeeded" &&
-        !String(result?.stdout ?? "").includes("sorryAx");
+        !String(result?.stdout ?? "").includes("sorryAx") &&
+        !String(result?.stderr ?? "").includes("sorryAx");
       const message = compiled ? "" : diagnostic(result);
       const goals = remainingLeanGoals(message);
       attempts.push(Object.freeze({
