@@ -103,6 +103,9 @@
     },
     "./check/conjectures-task": {
       "import": "./src/check/conjectures-task.mjs"
+    },
+    "./check/conjectures-verify": {
+      "import": "./src/check/conjectures-verify.mjs"
     }
   },
   "files": [
