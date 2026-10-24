@@ -201,9 +201,14 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
     await readConjecturesTask(root, plan.taskDirectory, {taskRoot});
   const sourcePath = task === undefined ?
     await realpath(path.join(root, plan.file)) : task.challengePath;
-  const rel = path.relative(root, sourcePath);
-  if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel))
-    throw new TypeError("lean-prove: source escapes project");
+  // A normal theorem belongs to the selected Lean project. A Conjectures
+  // Challenge belongs instead to the independently mounted immutable task
+  // checkout: readConjecturesTask has already bounded it to taskRoot.
+  if (task === undefined) {
+    const rel = path.relative(root, sourcePath);
+    if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel))
+      throw new TypeError("lean-prove: theorem source escapes project");
+  }
   const originalBytes = await readFile(sourcePath);
   if (originalBytes.length > 131072) throw new TypeError("lean-prove: source too large");
   const original = task === undefined ? originalBytes.toString("utf8") : task.main;
