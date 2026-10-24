@@ -52,7 +52,9 @@ export function leanCheckOperations({ dataRoot }) {
                 requestedAt,request:input,requestedBy:context?.invocation?.subject ?? null},context,leanProofFeed);
             try {
                 const plan = planLeanProof({...(input ?? {}),id});
-                const result = await runLeanProofSearch(plan);
+                const result = await runLeanProofSearch(plan, {
+                    taskRoot:process.env.CONJECTURES_TASKS_ROOT || undefined,
+                });
                 return append(dataRoot,result,context,leanProofFeed);
             } catch (error) {
                 return append(dataRoot,{
