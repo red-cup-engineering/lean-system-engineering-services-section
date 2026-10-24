@@ -88,7 +88,7 @@ export function planLeanProof(input) {
        !/^[a-z]+:[a-z0-9-]+$/u.test(input.blueprintLabel)))
     throw new TypeError("lean-prove: blueprintLabel must be an exact source claim label");
   for (const key of Object.keys(input))
-    if (!["project", "file", "taskDirectory", "id", "resumeFrom", "declaration", "maxAttempts", "timeoutMs", "blueprintLabel", "hints", "proposalFiles", "proofTarget"].includes(key))
+    if (!["project", "file", "taskDirectory", "id", "resumeFrom", "declaration", "maxAttempts", "timeoutMs", "totalTimeoutMs", "blueprintLabel", "hints", "proposalFiles", "proofTarget"].includes(key))
       throw new TypeError("lean-prove: unexpected field " + key);
   if (input.resumeFrom !== undefined &&
       (typeof input.resumeFrom !== "string" ||
@@ -100,7 +100,11 @@ export function planLeanProof(input) {
     ...(isTask ? { taskDirectory, declaration:"Bounty.target" } :
       { file, declaration:input.declaration }),
     maxAttempts: bounded(input.maxAttempts ?? 16, "maxAttempts", 1, 64),
-    timeoutMs: bounded(input.timeoutMs ?? 60_000, "timeoutMs", 1000, 180_000),
+    // Preserve the original single-check bound while making total search
+    // compute explicit. A hard theorem can consume a longer single attempt
+    // without allowing an unbounded sequence of 30-minute retries.
+    timeoutMs: bounded(input.timeoutMs ?? 60_000, "timeoutMs", 1000, 1_800_000),
+    totalTimeoutMs: bounded(input.totalTimeoutMs ?? 300_000, "totalTimeoutMs", 1000, 1_800_000),
     hints: Object.freeze(qualifiedHints(input.hints ?? [])),
     proposalFiles: candidatePaths(input.proposalFiles ?? []),
     ...(input.blueprintLabel === undefined ? {} : {blueprintLabel:input.blueprintLabel}),
@@ -360,8 +364,11 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   const scratchRelative = ".lake/proof-search/" + file;
   await mkdir(folder, { recursive: true });
   const attempts = [], started = new Date().toISOString();
+  const searchStart = Date.now();
   try {
     for (let index = 0; index < programs.length && index < plan.maxAttempts; index += 1) {
+      const remainingMs = plan.totalTimeoutMs - (Date.now() - searchStart);
+      if (remainingMs < 1000) break;
       if (hash(await readFile(sourcePath)) !== hash(originalBytes))
         throw new Error("lean-prove: source changed during search");
       const program = programs[index];
@@ -375,7 +382,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
       const planCheck = planLeanCheck({
         id: ("proof-" + plan.id + "-" + index).slice(0, 80),
         project: root, mode: "file", file: scratchRelative,
-        timeoutMs: plan.timeoutMs,
+        timeoutMs: Math.min(plan.timeoutMs, remainingMs),
       });
       const result = await check(planCheck);
       const compilerSucceeded = result?.state === "succeeded";
@@ -420,13 +427,20 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         const suggestion = suggestedExactProof(readout);
         // Canonicalize a search tactic (exact?) into the concrete proof that
         // Lean actually suggested. Never trust an info message without replay.
-        if (suggestion && suggestion !== program && attempts.length < plan.maxAttempts) {
+        if (suggestion && suggestion !== program && attempts.length < plan.maxAttempts &&
+            plan.totalTimeoutMs - (Date.now() - searchStart) >= 1000) {
           const simplified = replaceProofHole(original, suggestion);
           const rendered = task === undefined ? simplified :
             renderConjecturesCandidate(task, simplified).compilerSource;
           await writeFile(scratch, rendered + "\n#print axioms " + plan.declaration + "\n",
             {mode:0o600});
-          const replay = await check(planCheck);
+          const replayPlan = planLeanCheck({
+            id:("proof-" + plan.id + "-refine-" + index).slice(0,80),
+            project:root,mode:"file",file:scratchRelative,
+            timeoutMs:Math.min(plan.timeoutMs,
+              plan.totalTimeoutMs - (Date.now() - searchStart)),
+          });
+          const replay = await check(replayPlan);
           const replayOutput = String(replay?.stdout ?? "") + "\n" + String(replay?.stderr ?? "");
           const replayAxioms = replay?.state === "succeeded" ?
             readPrintedAxioms(replayOutput, plan.declaration) : null;
