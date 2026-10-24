@@ -182,10 +182,10 @@ function taskIdentity(task) {
  * existing lean-check/Lake executor, which enforces one concurrent node scope,
  * memory and time limits. The worker is never simulated by this service.
  */
-export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceRead = readLeanWorkspaceCore} = {}) {
+export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceRead = readLeanWorkspaceCore, taskRoot} = {}) {
   const root = await realpath(plan.project);
   const task = plan.taskDirectory === undefined ? undefined :
-    await readConjecturesTask(root, plan.taskDirectory);
+    await readConjecturesTask(root, plan.taskDirectory, {taskRoot});
   const sourcePath = task === undefined ?
     await realpath(path.join(root, plan.file)) : task.challengePath;
   const rel = path.relative(root, sourcePath);
