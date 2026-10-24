@@ -286,6 +286,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
         let selectedSource = candidate;
         let selectedAxioms = axioms;
         let selectedReadout = readout;
+        let selectedTargetVerdict = targetVerdict;
         const suggestion = suggestedExactProof(readout);
         // Canonicalize a search tactic (exact?) into the concrete proof that
         // Lean actually suggested. Never trust an info message without replay.
@@ -299,9 +300,15 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           const replayOutput = String(replay?.stdout ?? "") + "\n" + String(replay?.stderr ?? "");
           const replayAxioms = replay?.state === "succeeded" ?
             readPrintedAxioms(replayOutput, plan.declaration) : null;
+          const replayAfter = replay?.state === "succeeded" && targetBefore !== undefined ?
+            await observeProofTarget(root, plan.proofTarget) : undefined;
+          const replayTargetVerdict = replayAfter === undefined ? undefined :
+            judgeProofTarget(plan.proofTarget, targetBefore, replayAfter,
+              replayAxioms === null ? undefined : {axioms:replayAxioms});
           const simplerValid = replay?.state === "succeeded" && replayAxioms !== null &&
             !replayAxioms.includes("sorryAx") &&
-            (task === undefined || replayAxioms.every(a => task.allowedAxioms.includes(a)));
+            (task === undefined || replayAxioms.every(a => task.allowedAxioms.includes(a))) &&
+            (replayTargetVerdict === undefined || replayTargetVerdict.status === "preflight-passed");
           attempts.push(Object.freeze({
             index:attempts.length,program:suggestion,
             state:simplerValid ? "candidate-compiled" : (replay?.state ?? "failed"),
@@ -313,6 +320,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
             selectedSource = simplified;
             selectedAxioms = replayAxioms;
             selectedReadout = replayOutput;
+            selectedTargetVerdict = replayTargetVerdict ?? targetVerdict;
           }
         }
         if (hash(await readFile(sourcePath)) !== hash(originalBytes))
@@ -330,7 +338,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           declaration:plan.declaration, axioms:selectedAxioms,
           axiomReadout:selectedReadout.slice(-2500),
           ...(task === undefined ? {} : {task:taskIdentity(task),mainLean:selectedSource}),
-          ...(targetVerdict === undefined ? {} : {proofTarget:targetVerdict}),
+          ...(selectedTargetVerdict === undefined ? {} : {proofTarget:selectedTargetVerdict}),
           sourceDigest:hash(originalBytes),candidateDigest:hash(selectedSource),
           proofProgram:selectedProgram,
           proofTerm:"by\n  " + selectedProgram.split("\n").join("\n  "),
