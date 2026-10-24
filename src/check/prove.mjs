@@ -263,7 +263,12 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
   // Base strategies are read from the actual library hints. When a tactic
   // exposes genuine unsolved goals, synthesize its *continuation* next.
   const proposals = await readProofProposals(root, plan.proposalFiles ?? []);
-  const byProgram = new Map(proposals.map(p => [p.program,p]));
+  const byProgram = new Map();
+  for (const proposal of proposals) {
+    const lineage = byProgram.get(proposal.program) ?? [];
+    lineage.push(Object.freeze({path:proposal.path,digest:proposal.digest}));
+    byProgram.set(proposal.program, Object.freeze(lineage));
+  }
   // Real source-authored mathematical strategies are tried FIRST. Generic
   // tactics follow only when the Research/Faber proposals have not proved it.
   const programs = [...new Set([...proposals.map(p => p.program), ...proofPrograms(hints)])];
@@ -311,8 +316,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
       const goals = remainingLeanGoals(message);
       attempts.push(Object.freeze({
         index, program, state: compiled ? "candidate-compiled" : result?.state ?? "failed",
-        ...(byProgram.has(program) ? {sourceProposal:{
-          path:byProgram.get(program).path,digest:byProgram.get(program).digest}} : {}),
+        ...(byProgram.has(program) ? {sourceProposals:byProgram.get(program)} : {}),
         ...(axioms === null ? {} : {axioms}),
         ...(targetVerdict === undefined ? {} : {proofTargetStatus:targetVerdict.status}),
         ...(compiled ? {} : {diagnostic:message,openGoals:goals}),
@@ -391,8 +395,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
           ...(selectedTargetVerdict === undefined ? {} : {proofTarget:selectedTargetVerdict}),
           sourceDigest:hash(originalBytes),candidateDigest:hash(selectedSource),
           proofProgram:selectedProgram,
-          ...(byProgram.has(program) ? {sourceProposal:{
-            path:byProgram.get(program).path,digest:byProgram.get(program).digest}} : {}),
+          ...(byProgram.has(program) ? {sourceProposals:byProgram.get(program)} : {}),
           proofTerm:"by\n  " + selectedProgram.split("\n").join("\n  "),
           candidateSource:selectedSource,hints:Object.freeze(hints),
           attempts:Object.freeze(attempts),started,ended:new Date().toISOString(),
