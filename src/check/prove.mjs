@@ -74,8 +74,8 @@ export function proofPrograms(hints = []) {
   const programs = [
     "rfl", "assumption", "trivial", "decide", "simp", "simp_all",
     "omega", "aesop", "exact?", "constructor <;> assumption",
-    "constructor <;> simp", "intro h\n  exact h",
-    "simp_all\n  all_goals omega", "simp\n  all_goals aesop",
+    "constructor <;> simp", "intro h\nexact h",
+    "simp_all\nall_goals omega", "simp\nall_goals aesop",
   ];
   const names = qualifiedHints(hints);
   for (const name of names)
@@ -170,7 +170,7 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
       // compositional follow-ups; a failed tactic without goals does not.
       if (!compiled && goals.length && programs.length < 160) {
         const additions = ["assumption", "simp", "omega", "aesop"]
-          .map(tactic => program + "\n  all_goals " + tactic)
+          .map(tactic => program + "\nall_goals " + tactic)
           .filter(p => !queued.has(p));
         additions.forEach(p => queued.add(p));
         programs.splice(index + 1, 0, ...additions);
