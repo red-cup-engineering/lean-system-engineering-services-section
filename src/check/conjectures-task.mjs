@@ -164,6 +164,6 @@ export function renderConjecturesCandidate(task, proofBody) {
     mainLean:proofBody,
     compilerSource:task.header + proofBody + task.footer,
     mainDigest:sha(Buffer.from(proofBody,"utf8")),
-    taskId:task.taskId,
+    taskId:task.taskId,taskBundleDigest:task.taskBundleDigest,
   });
 }
