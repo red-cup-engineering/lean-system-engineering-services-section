@@ -13,7 +13,9 @@ const toolchain = "leanprover/lean4:v4.31.0";
 const target = () => ({
   platform:"https://proof.example.invalid/bounty/42", targetId:"challenge-42",
   taskDigest:hash("recorded task"), challenge:{path:"Challenge.lean",digest:hash(challenge)},
-  toolchain,manifestDigest:hash("manifest\n"),permittedAxioms:["Quot.sound"],
+  toolchain,manifestDigest:hash("manifest\n"),
+  sourceDigest:"sha256:94a40d801eab5a6ee054fabe3e2eeadc5562f18e06bdbb351f82f62b7430cf04",
+  permittedAxioms:["Quot.sound"],
 });
 async function workspace(fn) {
   const root=await mkdtemp(path.join(tmpdir(),"lean-target-"));
@@ -27,6 +29,8 @@ async function workspace(fn) {
 test("reject malformed and forged target claims before execution", () => {
   assert.throws(()=>validateProofTarget({...target(),extra:true}),/not permitted/);
   assert.throws(()=>validateProofTarget({...target(),taskDigest:"wrong"}),/sha256/);
+  assert.throws(()=>validateProofTarget({...target(),sourceDigest:"wrong"}),/sha256/);
+  assert.throws(()=>validateProofTarget(Object.fromEntries(Object.entries(target()).filter(([key])=>key!=="sourceDigest"))),/sourceDigest/);
   assert.throws(()=>validateProofTarget({...target(),platform:"http://invalid.test"}),/https/);
   assert.throws(()=>validateProofTarget({...target(),challenge:{path:"../escape.lean",digest:hash("x")}}),/challenge.path/);
   assert.throws(()=>validateProofTarget({...target(),challenge:{path:"Escape\\file.lean",digest:hash("x")}}),/challenge.path/);
@@ -90,12 +94,13 @@ test("sorry, disallowed axiom and absent kernel inspection always refuse", async
 
 test("a changed imported Lean dependency invalidates external proof preflight", async () => workspace(async root => {
   await writeFile(path.join(root,"Helper.lean"),"theorem supporting : True := by trivial\n");
-  const before=await observeProofTarget(root,target());
+  const pinned={...target(),sourceDigest:(await snapshotLeanSources(root)).digest};
+  const before=await observeProofTarget(root,pinned);
   assert.equal(before.matched,true);
   await writeFile(path.join(root,"Helper.lean"),"axiom supporting : False\n");
-  const after=await observeProofTarget(root,target());
-  assert.equal(after.matched,true); // The three original pins did not change.
-  const result=judgeProofTarget(target(),before,after,{axioms:[]});
+  const after=await observeProofTarget(root,pinned);
+  assert.equal(after.matched,false); // The original three pins are unchanged, but source digest is now checked.
+  const result=judgeProofTarget(pinned,before,after,{axioms:[]});
   assert.equal(result.status,"refused");
   assert.ok(result.findings.some(f=>f.code==="local-source-tree-changed"));
   assert.notEqual(before.localSources.digest,after.localSources.digest);
@@ -127,4 +132,10 @@ test("symlinked local Lean modules make proof source snapshot fail closed", asyn
     assert.ok(observation.findings.some(f=>f.code==="local-source-snapshot-unavailable"));
     assert.equal(judgeProofTarget(target(),observation,observation,{axioms:[]}).status,"refused");
   } finally { await rm(external,{recursive:true,force:true}); }
+}));
+
+test("a valid task cannot be bound to a different source revision", async () => workspace(async root => {
+  const observed=await observeProofTarget(root,{...target(),sourceDigest:hash("different revision")});
+  assert.equal(observed.matched,false);
+  assert.ok(observed.findings.some(f=>f.code==="local-source-digest-mismatch"));
 }));
