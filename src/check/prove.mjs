@@ -250,6 +250,24 @@ async function retainProofAttempt(root, result) {
   return Object.freeze({...result,receiptPath:relative});
 }
 
+async function retainCandidateSource(root, source, suffix = ".lean") {
+  const candidateDigest = hash(source);
+  const relative = ".lake/proof-candidates/" +
+    candidateDigest.slice("sha256:".length) + suffix;
+  const folder = path.join(root, ".lake", "proof-candidates");
+  await mkdir(folder, {recursive:true});
+  const file = path.join(root, relative);
+  try { await writeFile(file,source,{flag:"wx",mode:0o600}); }
+  catch(error) {
+    if (error?.code !== "EEXIST") throw error;
+    const info = await lstat(file);
+    if (!info.isFile() || info.isSymbolicLink() ||
+        hash(await readFile(file)) !== candidateDigest)
+      throw new TypeError("lean-prove: private content-addressed proof path is not the approved source");
+  }
+  return Object.freeze({candidateDigest,candidatePath:relative});
+}
+
 /**
  * Reuse a source-pinned private compiler history, never a user supplied
  * success claim. Failed proof programs are expensive work: when the original
@@ -523,26 +541,10 @@ export async function runLeanProofSearch(plan, {check = runLeanCheck, workspaceR
               currentTask.challengeDigest !== task.challengeDigest)
             throw new Error("lean-prove: original Conjectures task changed during proof construction");
         }
-        // Preserve a successful candidate as a private, content-addressed
-        // project artifact. Never write it into a public/source-control path.
-        // Conjectures retains precisely the Main.lean declaration bytes;
-        // ordinary mathematics retains its complete proved module.
-        const candidateDigest = hash(selectedSource);
-        const privateFolder = path.join(root, ".lake", "proof-candidates");
-        await mkdir(privateFolder, {recursive:true});
-        const candidateRelative = ".lake/proof-candidates/" +
-          candidateDigest.slice("sha256:".length) +
-          (task === undefined ? ".lean" : ".Main.lean");
-        const privateFile = path.join(root, candidateRelative);
-        try {
-          await writeFile(privateFile, selectedSource, {flag:"wx",mode:0o600});
-        } catch (error) {
-          if (error?.code !== "EEXIST") throw error;
-          const existing = await lstat(privateFile);
-          if (!existing.isFile() || existing.isSymbolicLink() ||
-              hash(await readFile(privateFile)) !== candidateDigest)
-            throw new TypeError("lean-prove: content-addressed artifact path is not the proved file");
-        }
+        // Retain the exact successfully compiled source as a private artifact.
+        const {candidateDigest,candidatePath:candidateRelative} =
+          await retainCandidateSource(root,selectedSource,
+            task === undefined ? ".lean" : ".Main.lean");
         return retainProofAttempt(root, Object.freeze({
           kind: "metroplat.lean.proof-search-result", id:plan.id,
           state:"candidate-compiled", project:root,
