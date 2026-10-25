@@ -1,6 +1,6 @@
 {
   "name": "@red-cup-engineering/lean-system-services-section",
-  "version": "0.2.2",
+  "version": "0.2.3-dev.0",
   "type": "module",
   "private": false,
   "description": "Lean/Blueprint/Verso proofing-project domain logic: toolchain/Lakefile/module codecs, import-graph/theorem-spine/capability-surface readers, Blueprint claim-graph linting, Verso exposition welding, and a live Lean-workspace filesystem reader.",
@@ -91,7 +91,8 @@
     "./golden-vector/judge": "./src/golden-vector/judge.mjs",
     "./golden-vector/specification": "./src/golden-vector/specification.mjs",
     "./golden-vector/suites": "./src/golden-vector/suites.mjs",
-    "./conformance-gate": "./src/conformance-gate.mjs"
+    "./conformance-gate": "./src/conformance-gate.mjs",
+    "./workspace/topic": "./src/workspace/topic.mjs"
   },
   "files": [
     "src",
@@ -119,7 +120,6 @@
     "@red-cup-engineering/javascript-node-services-section": "0.3.2",
     "@red-cup-engineering/tex-engineering-services-section": "0.1.1",
     "@red-cup-engineering/computer-system-engine": "0.1.2",
-    "@red-cup-engineering/feltos": "0.20.2",
     "@red-cup-engineering/organizing": "0.2.3"
   },
   "scripts": {
