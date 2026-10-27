@@ -5,6 +5,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { readLeanDeclarationInspection, sourcePathForModule } from "./plan.mjs";
 import { leanCheckSucceeded } from "./admission.mjs";
+import { observeWitLedger, readWitLedgerInspection } from "./wit-ledger.mjs";
 import { fileURLToPath } from "node:url";
 
 import { parseLeanBuildOutput } from "../codec/build-oracle.mjs";
@@ -133,7 +134,11 @@ export async function runLeanCheck(plan, options = {}) {
         let command = options.lakeWrapper ?? lakeWrapper;
         let source;
         let resolvedSourcePath;
-        if (plan.mode === "file") {
+        const witLedgerBefore = plan.mode === "wit-ledger" ? await observeWitLedger(plan.project) : undefined;
+        if (plan.mode === "wit-ledger") {
+            command = process.execPath;
+            args = [fileURLToPath(new URL("./wit-ledger-worker.mjs", import.meta.url)), options.lakeWrapper ?? lakeWrapper];
+        } else if (plan.mode === "file") {
             const project = await realpath(plan.project);
             const file = await realpath(path.join(plan.project, plan.file));
             const relative = path.relative(project, file);
@@ -181,6 +186,12 @@ export async function runLeanCheck(plan, options = {}) {
         const cleanup = await terminateScope(plan.unit, knownControlGroup);
         const parsed = parseLeanBuildOutput(settled.stdout.text, settled.stderr.text);
         let sourceChanged = false;
+        if (witLedgerBefore !== undefined) {
+            try {
+                const after = await observeWitLedger(plan.project);
+                sourceChanged = after.localSources.digest !== witLedgerBefore.localSources.digest;
+            } catch { sourceChanged = true; }
+        }
         if (source !== undefined) {
             try {
                 const finalPath = await realpath(path.join(plan.project, source.file));
@@ -189,7 +200,7 @@ export async function runLeanCheck(plan, options = {}) {
             } catch { sourceChanged = true; }
         }
         const outputTruncated = settled.stdout.truncated || settled.stderr.truncated;
-        const succeeded = leanCheckSucceeded({
+        let succeeded = leanCheckSucceeded({
             timedOut, exitCode: settled.code, signal: settled.signal,
             spawnError: settled.error, compilerErrors: parsed.errors,
             outputTruncated, scopeClean: cleanup.clean, sourceChanged,
@@ -198,14 +209,26 @@ export async function runLeanCheck(plan, options = {}) {
         let inspection;
         if (plan.mode === "declaration" && succeeded)
             inspection = readLeanDeclarationInspection(settled.stdout.text, plan.declaration);
+        let witLedger;
+        let witLedgerRefusal;
+        if (witLedgerBefore !== undefined && succeeded) {
+            try { witLedger = readWitLedgerInspection(settled.stdout.text, witLedgerBefore); }
+            catch (error) {
+                succeeded = false;
+                witLedgerRefusal = { message: error instanceof Error ? error.message : String(error) };
+            }
+        }
         return Object.freeze({ kind: "metroplat.lean.check-result", id: plan.id,
             state: timedOut ? "timed-out" : succeeded ? "succeeded" : "failed",
             project: plan.project, mode: plan.mode ?? "build", ...(plan.targets === undefined ? {} : { targets: plan.targets }),
             ...(source === undefined ? {} : { source, sourceChanged }),
             ...(plan.program === undefined ? {} : { program: plan.program, module: plan.module, declaration: plan.declaration }),
             ...(inspection === undefined ? {} : { inspection }), unit: plan.unit, started, ended: new Date().toISOString(), timeoutMs: plan.timeoutMs,
+            ...(witLedger === undefined ? {} : { witLedger }),
+            ...(witLedgerBefore === undefined ? {} : { sourceChanged, localSources: witLedgerBefore.localSources }),
             exitCode: settled.code, signal: settled.signal, stdout: settled.stdout.text, stderr: settled.stderr.text,
-            outputTruncated, ...parsed, cleanup });
+            outputTruncated, ...parsed,
+            ...(witLedgerRefusal === undefined ? {} : { errors: Object.freeze([...parsed.errors, witLedgerRefusal]) }), cleanup });
     } finally {
         if (timeout !== undefined) clearTimeout(timeout);
         await terminateScope(plan.unit, knownControlGroup).catch(() => undefined);
@@ -214,3 +237,4 @@ export async function runLeanCheck(plan, options = {}) {
         await releaseNodeLock(plan.id);
     }
 }
+

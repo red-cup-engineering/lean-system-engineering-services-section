@@ -86,6 +86,7 @@
     "./codec/build-oracle": "./src/codec/build-oracle.mjs",
     "./check/plan": "./src/check/plan.mjs",
     "./check/run": "./src/check/run.mjs",
+    "./check/wit-ledger": "./src/check/wit-ledger.mjs",
     "./operations": "./src/operations.mjs",
     "./check/schema": "./src/check/schema.mjs",
     "./golden-vector/judge": "./src/golden-vector/judge.mjs",
@@ -139,3 +140,4 @@
     "url": "https://github.com/561-group/.github/blob/main/TIPS.md"
   }
 }
+

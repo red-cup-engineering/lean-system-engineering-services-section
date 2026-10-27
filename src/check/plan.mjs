@@ -21,8 +21,8 @@ export const sourcePathForModule = module => name(module, "module").replaceAll("
 export function planLeanCheck(input) {
     const project = path.resolve(nonempty(input?.project, "project"));
     const mode = input?.mode ?? "build";
-    if (!["build", "file", "declaration"].includes(mode)) throw new TypeError("lean-check: mode must be build, file, or declaration");
-    const allowed = new Set(["project", "id", "mode", "timeoutMs", ...(mode === "build" ? ["targets"] : mode === "file" ? ["file"] : ["module", "declaration"])]);
+    if (!["build", "file", "declaration", "wit-ledger"].includes(mode)) throw new TypeError("lean-check: mode must be build, file, declaration, or wit-ledger");
+    const allowed = new Set(["project", "id", "mode", "timeoutMs", ...(mode === "build" ? ["targets"] : mode === "file" ? ["file"] : mode === "declaration" ? ["module", "declaration"] : [])]);
     for (const key of Object.keys(input)) if (!allowed.has(key)) throw new TypeError(`lean-check: ${key} is not a ${mode} input`);
     const timeoutMs = input?.timeoutMs ?? defaultLeanCheckTimeoutMs;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > maximumLeanCheckTimeoutMs)
@@ -30,7 +30,10 @@ export function planLeanCheck(input) {
     const id = nonempty(input?.id, "id");
     if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,79}$/u.test(id)) throw new TypeError("lean-check: id must be an alphanumeric/hyphen identifier of at most 80 characters");
     let action;
-    if (mode === "build") {
+    if (mode === "wit-ledger") {
+        action = { args: Object.freeze(["env", "lean", "--run", "scripts/WitLedger.lean"]),
+            buildTargets: Object.freeze(["Obsmetrologia"]) };
+    } else if (mode === "build") {
         const targets = input?.targets ?? [];
         if (!Array.isArray(targets)) throw new TypeError("lean-check: targets must be an array");
         const normalized = targets.map(target => nonempty(target, "target"));
@@ -64,3 +67,4 @@ export function readLeanDeclarationInspection(stdout, declaration) {
     const names = tag => Object.freeze(read(tag).split(",").filter(Boolean).sort());
     return Object.freeze({ declaration, axioms: names("#lean-axioms"), dependencies: names("#lean-dependencies") });
 }
+

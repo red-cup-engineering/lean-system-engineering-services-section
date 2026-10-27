@@ -20,8 +20,8 @@ export function leanCheckOperations({ dataRoot }) {
         domain: leanCheckRequestContract, codomain: leanCheckResultContract, locus: "project",
         writes: [leanCheckFeed],
         effects: { class: "external", replay: "coordinated", coordination: "coordination-required", deterministic: "unmeasured", totality: "partial" },
-        summary: "Run a bounded Lake build, Lean file check, or declaration inspection in lean.slice with durable compiler evidence.",
-        description: "Domain: { project, mode?: build|file|declaration, timeoutMs?: integer }. Build accepts targets?: string[]; file requires file: project-relative .lean path; declaration requires module and declaration: qualified Lean names. No arbitrary command or args. Results include stdout, stderr, exitCode, diagnostics, and for declaration mode actual axioms and direct dependencies after rebuilding the requested module. Only one check runs on the node; concurrency is refused with runningId.",
+        summary: "Run a bounded Lake build, Lean file/declaration check, or original Obsmetrologia WIT ledger audit in lean.slice with durable compiler evidence.",
+        description: "Domain: { project, mode?: build|file|declaration|wit-ledger, timeoutMs?: integer }. Build accepts targets?: string[]; file requires file: project-relative .lean path; declaration requires module and declaration: qualified Lean names. The wit-ledger action rebuilds Obsmetrologia and executes lake env lean --run scripts/WitLedger.lean against the original producer source and committed scripts/wit-ledger.txt, retaining producer, ledger, toolchain and local-source fingerprints and the producer's own/carried counts after successful comparison. It never pays or edits the ledger. No arbitrary command or args. Declaration mode reports actual axioms and direct dependencies after rebuilding the requested module. Only one bounded check runs per node; concurrency is refused with runningId.",
         run: async (input, _args, context) => {
             const plan = planLeanCheck({ ...(input ?? {}), id: randomUUID() });
             const requestedAt = new Date().toISOString();
@@ -37,3 +37,4 @@ export function leanCheckOperations({ dataRoot }) {
         },
     })]);
 }
+
