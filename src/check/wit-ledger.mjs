@@ -5,6 +5,7 @@ import path from "node:path";
 const producerPath = "scripts/WitLedger.lean";
 const ledgerPath = "scripts/wit-ledger.txt";
 const ignored = new Set([".git", ".lake", "node_modules"]);
+const rootAgentMetadata = new Set([".agents", ".claude", ".codex"]);
 const namedInputs = new Set(["lean-toolchain", "lakefile.toml", "lakefile.lean", "lake-manifest.json", ledgerPath]);
 const digest = value => "sha256:" + createHash("sha256").update(value).digest("hex");
 
@@ -19,6 +20,7 @@ export async function observeWitLedger(project) {
         for (const entry of await readdir(directory, { withFileTypes: true })) {
             const name = relative ? `${relative}/${entry.name}` : entry.name;
             if (entry.isDirectory() && ignored.has(entry.name)) continue;
+            if (entry.isDirectory() && relative === "" && rootAgentMetadata.has(entry.name)) continue;
             const target = path.join(directory, entry.name);
             if (entry.isSymbolicLink()) throw new TypeError(`lean-check: wit-ledger source symlink: ${name}`);
             if (entry.isDirectory()) { await walk(target, name); continue; }
@@ -43,7 +45,7 @@ export async function observeWitLedger(project) {
         producer: Object.freeze(producer), ledger: Object.freeze(ledger),
         toolchain: texts.get("lean-toolchain").trim(),
         localSources: Object.freeze({ digest: digest(JSON.stringify(files)), count: files.length,
-            scope: "local Lean sources, Lake configuration, and committed WIT ledger; external package bytes excluded" }),
+            scope: "local Lean sources, Lake configuration, and committed WIT ledger; external package bytes and root agent metadata (.agents, .claude, .codex) excluded" }),
         ledgerText: texts.get(ledgerPath),
     });
 }

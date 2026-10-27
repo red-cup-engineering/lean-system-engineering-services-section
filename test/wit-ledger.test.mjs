@@ -64,11 +64,26 @@ test("local input observation binds producer, ledger, imports and toolchain", as
         assert.equal(before.localSources.count, 4);
         assert.match(before.producer.digest, /^sha256:[0-9a-f]{64}$/u);
         assert.deepEqual(await observeWitLedger(root), before);
+        for (const directory of [".agents", ".claude", ".codex"]) {
+            await mkdir(path.join(root, directory, "skills"), { recursive: true });
+            await symlink("../../../skills/commit-lean-development", path.join(root, directory, "skills", "commit-lean-development"));
+            await writeFile(path.join(root, directory, "Ignored.lean"), "-- agent metadata is not a Lean input\n");
+        }
+        assert.deepEqual(await observeWitLedger(root), before, "known agent projection metadata must not obstruct or enter the source snapshot");
+        assert.match(before.localSources.scope, /root agent metadata/);
         await writeFile(path.join(root, "Obsmetrologia.lean"), "namespace Obsmetrologia\ntheorem added : True := .intro\nend Obsmetrologia\n");
         assert.notEqual((await observeWitLedger(root)).localSources.digest, before.localSources.digest);
         await symlink("Obsmetrologia.lean", path.join(root, "Alias.lean"));
         await assert.rejects(observeWitLedger(root), /symlink/);
         await rm(path.join(root, "Alias.lean"));
+        for (const name of ["scripts/WitLedger.lean", "lean-toolchain"]) {
+            const value = name.endsWith(".lean") ? "import Obsmetrologia\n" : "leanprover/lean4:v4.31.0\n";
+            await rm(path.join(root, name));
+            await symlink(path.join(root, "Obsmetrologia.lean"), path.join(root, name));
+            await assert.rejects(observeWitLedger(root), /symlink/);
+            await rm(path.join(root, name));
+            await writeFile(path.join(root, name), value);
+        }
         await rm(path.join(root, "scripts/WitLedger.lean"));
         await assert.rejects(observeWitLedger(root), /requires scripts\/WitLedger/);
     } finally { await rm(root, { recursive: true, force: true }); }

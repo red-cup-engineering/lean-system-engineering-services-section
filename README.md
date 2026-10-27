@@ -69,7 +69,10 @@ A successful comparison returns `witLedger.entries`, with the original producer'
 `own` and `carried` values, plus its totals and SHA-256 identities for the producer,
 ledger and local Lean source/configuration snapshot. Changed local inputs, missing
 or repeated success records, inconsistent totals and malformed entries refuse
-the result. Imported package bytes are outside that local snapshot and remain
+the result. Root agent metadata directories (`.agents`, `.claude`, `.codex`) are
+outside the claimed Lean input snapshot, including their skill projection links.
+Source, producer and configuration symlinks elsewhere remain refused.
+Imported package bytes are outside that local snapshot and remain
 the selected project's dependency responsibility. The native worker's scope,
 output-completeness and deadline requirements remain in force.
 
